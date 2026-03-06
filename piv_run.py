@@ -1,5 +1,8 @@
+# piv_run.py
 from __future__ import annotations
-import json, sys
+
+import json
+import sys
 from pathlib import Path
 
 from PIV.Codes.OpenPIV.config import PIVConfig
@@ -22,15 +25,18 @@ def main():
         search_area_factor=int(c["search_area_factor"]),
         sig2noise_method=str(c["sig2noise_method"]),
         mask_threshold=float(c["mask_threshold"]),
-        keep_percentile=float(c["keep_percentile"]),
-        lm_kernel=int(c["lm_kernel"]),
-        lm_thresh=float(c["lm_thresh"]),
-        lm_eps=float(c["lm_eps"]),
+        apply_dynamic_mask=bool(c.get("apply_dynamic_mask", True)),
         default_quiver_scale=8.0,
         quiver_width=0.0025,
-        # Si tu PIVConfig todavía incluye apply_dynamic_mask, lo puedes pasar.
-        # Si no existe, simplemente bórralo también.
-        apply_dynamic_mask=True,
+        keep_percentile=float(c.get("keep_percentile", 90.0)),
+        lm_kernel=int(c.get("lm_kernel", 1)),
+        lm_thresh=float(c.get("lm_thresh", 2.0)),
+        lm_eps=float(c.get("lm_eps", 0.1)),
+        # MEJORA #5: parametrizables desde config JSON
+        replace_outliers_kernel=int(c.get("replace_outliers_kernel", 2)),
+        replace_outliers_max_iter=int(c.get("replace_outliers_max_iter", 3)),
+        # MEJORA #3: grilla completa por defecto
+        export_full_grid=bool(c.get("export_full_grid", True)),
     )
 
     piv_opt = PIVRunOptions(

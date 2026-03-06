@@ -1,4 +1,6 @@
+# config.py
 from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -34,9 +36,8 @@ class PIVConfig:
     # =========================
     # Masking
     # =========================
-    # Solo usa máscara dinámica por frame desde masks_dir
     mask_threshold: float
-    apply_dynamic_mask: bool = True  # siempre True en este modo
+    apply_dynamic_mask: bool = True
 
     # =========================
     # Viewer
@@ -55,6 +56,20 @@ class PIVConfig:
     lm_kernel: int = 1
     lm_thresh: float = 2.0
     lm_eps: float = 0.1
+
+    # =========================
+    # MEJORA #5: replace_outliers parametrizable
+    # Antes hardcodeados: kernel_size=2, max_iter=3
+    # =========================
+    replace_outliers_kernel: int = 2
+    replace_outliers_max_iter: int = 3
+
+    # =========================
+    # MEJORA #3: exportar grilla completa o solo válidos
+    # True  => todas las filas (grilla consistente entre momentos)
+    # False => solo vectores válidos (comportamiento anterior)
+    # =========================
+    export_full_grid: bool = True
 
     # =========================
     # Helpers

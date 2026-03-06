@@ -53,6 +53,8 @@ def compute_pair_worker(
     apply_dynamic_mask: bool = True,
     apply_static_mask: bool = False,
     fixed_mask_path: str = "",
+    replace_outliers_kernel: int = 2,
+    replace_outliers_max_iter: int = 3,
 ) -> Tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, str, str]:
     import openpiv.pyprocess as pyprocess
     import openpiv.filters as filters
@@ -88,8 +90,7 @@ def compute_pair_worker(
 
     # -------------------------
     # 3) Máscara final para in_mask y display (unión de todo)
-    #    Solo se usa para marcar vectores NaN y display,
-    #    NO para enmascarar los frames antes del PIV.
+    #    Solo marca vectores NaN y display; NO se usa para enmascarar frames PIV.
     # -------------------------
     if fix_bool is not None:
         final_mask_bool = (mask_a_bool | mask_b_bool) | fix_bool
@@ -102,15 +103,14 @@ def compute_pair_worker(
         mask_for_display = np.zeros_like(frame_a, dtype=np.float32)
 
     # -------------------------
-    # 4) Display background (whiten masked)
+    # 4) Display background
     # -------------------------
     bg_display = whiten_masked_background(frame_a, mask_for_display, mask_threshold)
 
     # -------------------------
     # 5) Aplicar máscara a frames para PIV
-    #    CORRECCIÓN: cada frame se enmascara con su propia máscara dinámica
-    #    independientemente (igual que el código original que funcionaba),
-    #    más la fija si existe.
+    #    BUG FIX: cada frame se enmascara con su propia máscara dinámica
+    #    independientemente, más la fija si existe.
     # -------------------------
     fa = frame_a.copy()
     fb = frame_b.copy()
@@ -154,8 +154,8 @@ def compute_pair_worker(
         u, v = filters.replace_outliers(
             u, v, flags,
             method="localmean",
-            max_iter=3,
-            kernel_size=2
+            max_iter=replace_outliers_max_iter,
+            kernel_size=replace_outliers_kernel,
         )
 
         u[in_mask] = np.nan
@@ -187,6 +187,8 @@ def validate_pair_worker(
     lm_kernel: int,
     lm_thresh: float,
     lm_eps: float,
+    replace_outliers_kernel: int = 2,
+    replace_outliers_max_iter: int = 3,
 ) -> Tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, str, str]:
     import openpiv.filters as filters
 
@@ -205,7 +207,7 @@ def validate_pair_worker(
         u2[flags_vel] = np.nan
         v2[flags_vel] = np.nan
 
-    # B) Local median (vectores puntuales outliers)
+    # B) Local median — vectorizado (MEJORA #1)
     u_tmp = u2.copy()
     v_tmp = v2.copy()
     u_tmp[in_mask] = np.nan
@@ -216,16 +218,16 @@ def validate_pair_worker(
     u2[flags_lm] = np.nan
     v2[flags_lm] = np.nan
 
-    # C) Replace outliers / huecos
+    # C) Replace outliers / huecos — MEJORA #5: kernel y max_iter parametrizables
     flags2 = (~np.isfinite(u2)) | (~np.isfinite(v2))
     u3, v3 = filters.replace_outliers(
         u2, v2, flags2,
         method="localmean",
-        max_iter=3,
-        kernel_size=2
+        max_iter=replace_outliers_max_iter,
+        kernel_size=replace_outliers_kernel,
     )
 
-    # D) Reimpose mask (no rellenar dentro)
+    # D) Reimpose mask
     u3[in_mask] = np.nan
     v3[in_mask] = np.nan
 

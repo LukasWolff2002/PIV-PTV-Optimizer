@@ -1,4 +1,4 @@
-# piv/pipeline.py
+# pipeline.py
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,29 +15,25 @@ from .workers import compute_pair_worker, validate_pair_worker
 
 
 def _list_images(images_dir: Path) -> List[Path]:
-    # Ajusta extensiones si lo necesitas (tif/tiff/png/etc)
     imgs = sorted(images_dir.glob("*.tif*"))
     return imgs
 
 
 def _build_mask_map(masks_dir: Path) -> Dict[str, Path]:
     """
-    Crea mapa por stem:  <stem> -> <path>
-    Ej:
-      frame_0001_mask.tiff  => key 'frame_0001'
+    Crea mapa por stem: <img_stem> -> <mask_path>
+    Espera archivos tipo: frame_0001_mask.tiff
     """
     masks = list(masks_dir.glob("*.tif*"))
     out: Dict[str, Path] = {}
 
     for m in masks:
-        stem = m.stem  # e.g. frame_0001_mask
+        stem = m.stem
         if stem.endswith("_mask"):
-            img_stem = stem[:-5]  # remove "_mask"
+            img_stem = stem[:-5]
         else:
-            # si hay máscaras que no siguen el patrón, las ignoramos
             continue
 
-        # si hay duplicados, preferimos el más reciente (por si se regeneró)
         if img_stem not in out:
             out[img_stem] = m
         else:
@@ -51,10 +47,6 @@ def _build_mask_map(masks_dir: Path) -> Dict[str, Path]:
 
 
 def _mask_for_image(mask_map: Dict[str, Path], img_path: Path) -> Path:
-    """
-    Retorna la máscara correspondiente a una imagen, basada en img.stem.
-    Espera archivos como: <img.stem>_mask.tif / <img.stem>_mask.tiff
-    """
     key = img_path.stem
     if key not in mask_map:
         raise FileNotFoundError(
@@ -76,13 +68,11 @@ class PIVPipeline:
 
         if len(images) < 2:
             raise RuntimeError(f"Se necesitan al menos 2 imágenes en {cfg.images_dir}")
-
         if len(cfg.window_sizes) != len(cfg.overlaps):
             raise RuntimeError("WINDOW_SIZES y OVERLAPS deben tener el mismo largo.")
         if cfg.dt_s() <= 0:
             raise RuntimeError(f"DT_MS debe ser > 0. Valor actual: {cfg.dt_ms}")
 
-        # En este modo, solo soportamos máscara dinámica desde masks_dir si está activa
         use_masks = bool(getattr(cfg, "apply_dynamic_mask", True))
 
         mask_map: Dict[str, Path] = {}
@@ -101,8 +91,6 @@ class PIVPipeline:
                 m_a = _mask_for_image(mask_map, img_a)
                 m_b = _mask_for_image(mask_map, img_b)
             else:
-                # Si compute_pair_worker requiere paths, puedes pasar "" (vacío) y manejarlo en worker.
-                # Aquí dejamos paths vacíos como string luego.
                 m_a = Path("")
                 m_b = Path("")
 
@@ -142,8 +130,11 @@ class PIVPipeline:
                         cfg.sig2noise_method,
                         cfg.mm_per_px(),
                         cfg.mask_threshold,
-                        # SOLO dinámica: pasamos un flag y nada más
                         use_masks,
+                        False,   # apply_static_mask (no usado en este modo)
+                        "",      # fixed_mask_path
+                        cfg.replace_outliers_kernel,   # MEJORA #5
+                        cfg.replace_outliers_max_iter, # MEJORA #5
                     )
                 )
 
@@ -198,13 +189,15 @@ class PIVPipeline:
                         cfg.lm_kernel,
                         cfg.lm_thresh,
                         cfg.lm_eps,
+                        cfg.replace_outliers_kernel,   # MEJORA #5
+                        cfg.replace_outliers_max_iter, # MEJORA #5
                     )
                 )
 
             for fut in tqdm(
                 as_completed(futures),
                 total=len(futures),
-                desc="Aplicando validation",
+                desc="Validando PIV",
                 unit="par",
                 ascii=True,
                 dynamic_ncols=True,
