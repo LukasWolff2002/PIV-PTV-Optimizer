@@ -1,0 +1,8 @@
+# OpenPIV export (PIVlab-like)
+# pair_id: 18
+# source: Basler_acA1440-220uc__40671380__20260302_175123196_0396.tiff - Basler_acA1440-220uc__40671380__20260302_175123196_0397.tiff
+# DT_ms: 1.0
+# LM_KERNEL: 1, LM_THRESH: 2.0, LM_EPS: 0.1
+# KEEP_PERCENTILE: 90.0
+# columns: x_mm y_mm u_mm_per_s v_mm_per_s speed_mm_per_s valid
+
