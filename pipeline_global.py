@@ -9,7 +9,7 @@ import re
 # 1) USER INPUTS
 # ============================================================
 
-RUN_MODE = "both"  # "piv" | "ptv" | "both"
+RUN_MODE = "piv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
 CONDA_BAT = r"C:\Users\MBX\anaconda3\condabin\conda.bat"
@@ -72,8 +72,8 @@ CAM_PROFILES = {
         px_per_mm=20.0,
         width_px=1024,
         height_px=1024,
-        apply_dynamic_mask=False,
-        apply_static_mask=True,
+        apply_dynamic_mask=True,
+        apply_static_mask=False,
     ),
     4: dict(
         fps=600,
@@ -87,10 +87,10 @@ CAM_PROFILES = {
 }
 
 # --- Preprocess: muestreo por bloques ---
-BLOCKS      = 40
-BLOCK_SIZE  = 22
+BLOCKS      = 200
+BLOCK_SIZE  = 11
 SKIP_INTER  = 0
-SKIP_FINAL  = 20
+SKIP_FINAL  = 9
 DELETE_EXISTING_PRE = True
 
 # --- Modelo YOLO máscaras (para PIV) ---
@@ -106,7 +106,7 @@ OVERLAPS     = [32, 16, 8]
 SEARCH_AREA_FACTOR = 1
 SIG2NOISE_METHOD   = "peak2peak"
 MASK_THRESHOLD = 0.0
-KEEP_PERCENTILE = 90.0
+KEEP_PERCENTILE = 80.0
 LM_KERNEL = 1
 LM_THRESH = 2.0
 LM_EPS    = 0.1

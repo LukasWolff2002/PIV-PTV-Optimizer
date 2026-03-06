@@ -14,8 +14,7 @@ def _load_static_mask_if_needed(
     shape_hw: tuple[int, int],
 ) -> Optional[np.ndarray]:
     """
-    Carga máscara fija si existe. Devuelve uint8 (H,W) o None.
-    Asume que el archivo es imagen tipo tif/tiff/png/etc.
+    Carga máscara fija si existe. Devuelve float32 (H,W) o None.
     """
     if not fixed_mask_path:
         return None
@@ -24,18 +23,15 @@ def _load_static_mask_if_needed(
     if not p.exists():
         return None
 
-    m = read_gray(p)  # float en [0,255] o [0,1] dependiendo de tu read_gray
-    # Aseguramos (H,W)
+    m = read_gray(p)
     if m.ndim == 3:
         m = m[..., 0]
-    # Si el tamaño no coincide, NO reescalo aquí (mejor hacerlo antes o con cv2).
+
     if m.shape != shape_hw:
-        # fallback: intenta resize con cv2 si está disponible
         try:
             import cv2
             m = cv2.resize(m, (shape_hw[1], shape_hw[0]), interpolation=cv2.INTER_NEAREST)
         except Exception:
-            # si no se puede, ignora la fija para evitar errores silenciosos
             return None
 
     return m
@@ -65,44 +61,42 @@ def compute_pair_worker(
     frame_b = read_gray(Path(img_b_path))
 
     # -------------------------
-    # 1) Máscara dinámica (por frame)
+    # 1) Máscara dinámica (por frame, independiente para A y B)
     # -------------------------
     if apply_dynamic_mask:
         mask_a = read_gray(Path(mask_a_path))
         mask_b = read_gray(Path(mask_b_path))
-        mask_dyn = np.maximum(mask_a, mask_b)  # union A/B
+        mask_a_bool = mask_a > mask_threshold
+        mask_b_bool = mask_b > mask_threshold
+        mask_union  = np.maximum(mask_a, mask_b)
     else:
-        # máscara dinámica apagada => todo cero
-        mask_dyn = np.zeros_like(frame_a, dtype=np.float32)
+        mask_a_bool = np.zeros_like(frame_a, dtype=bool)
+        mask_b_bool = np.zeros_like(frame_b, dtype=bool)
+        mask_union  = np.zeros_like(frame_a, dtype=np.float32)
 
     # -------------------------
     # 2) Máscara fija (por cámara)
     # -------------------------
-    mask_fix = None
+    fix_bool = None
     if apply_static_mask:
         mask_fix = _load_static_mask_if_needed(
             fixed_mask_path=fixed_mask_path,
             shape_hw=frame_a.shape[:2],
         )
+        if mask_fix is not None:
+            fix_bool = mask_fix > mask_threshold
 
     # -------------------------
-    # 3) Máscara final
-    #    - si ambas: INTERSECCIÓN (AND) de zonas enmascaradas
-    #    - si solo una: esa
+    # 3) Máscara final para in_mask y display (unión de todo)
+    #    Solo se usa para marcar vectores NaN y display,
+    #    NO para enmascarar los frames antes del PIV.
     # -------------------------
-    # Convertimos a boolean "enmascarado"
-    dyn_bool = (mask_dyn > mask_threshold) if apply_dynamic_mask else None
-    fix_bool = (mask_fix > mask_threshold) if (apply_static_mask and mask_fix is not None) else None
-
-    if apply_dynamic_mask and apply_static_mask and (fix_bool is not None):
-        final_mask_bool = dyn_bool & fix_bool
-        mask_for_display = (final_mask_bool.astype(np.uint8) * 255)
+    if fix_bool is not None:
+        final_mask_bool = (mask_a_bool | mask_b_bool) | fix_bool
+        mask_for_display = (final_mask_bool.astype(np.uint8) * 255).astype(np.float32)
     elif apply_dynamic_mask:
-        final_mask_bool = dyn_bool
-        mask_for_display = mask_dyn
-    elif apply_static_mask and (fix_bool is not None):
-        final_mask_bool = fix_bool
-        mask_for_display = (final_mask_bool.astype(np.uint8) * 255)
+        final_mask_bool = mask_a_bool | mask_b_bool
+        mask_for_display = mask_union
     else:
         final_mask_bool = np.zeros_like(frame_a, dtype=bool)
         mask_for_display = np.zeros_like(frame_a, dtype=np.float32)
@@ -114,14 +108,23 @@ def compute_pair_worker(
 
     # -------------------------
     # 5) Aplicar máscara a frames para PIV
+    #    CORRECCIÓN: cada frame se enmascara con su propia máscara dinámica
+    #    independientemente (igual que el código original que funcionaba),
+    #    más la fija si existe.
     # -------------------------
     fa = frame_a.copy()
     fb = frame_b.copy()
 
-    # enmascaramos con la máscara FINAL
-    fa[final_mask_bool] = 0.0
-    fb[final_mask_bool] = 0.0
+    if fix_bool is not None:
+        fa[mask_a_bool | fix_bool] = 0.0
+        fb[mask_b_bool | fix_bool] = 0.0
+    else:
+        fa[mask_a_bool] = 0.0
+        fb[mask_b_bool] = 0.0
 
+    # -------------------------
+    # 6) Multi-pass PIV
+    # -------------------------
     u_last = v_last = None
     x_px_last = y_px_last = None
     in_mask_last = None
@@ -190,7 +193,7 @@ def validate_pair_worker(
     u2 = u_mms.copy()
     v2 = v_mms.copy()
 
-    # A) velocity-based global (u-v region)
+    # A) Velocity-based global (u-v region)
     valid = np.isfinite(u2) & np.isfinite(v2) & (~in_mask)
     if valid.sum() >= 10:
         uvals = u2[valid]
@@ -202,7 +205,7 @@ def validate_pair_worker(
         u2[flags_vel] = np.nan
         v2[flags_vel] = np.nan
 
-    # B) local median (puntuales)
+    # B) Local median (vectores puntuales outliers)
     u_tmp = u2.copy()
     v_tmp = v2.copy()
     u_tmp[in_mask] = np.nan
@@ -213,7 +216,7 @@ def validate_pair_worker(
     u2[flags_lm] = np.nan
     v2[flags_lm] = np.nan
 
-    # C) replace outliers/huecos
+    # C) Replace outliers / huecos
     flags2 = (~np.isfinite(u2)) | (~np.isfinite(v2))
     u3, v3 = filters.replace_outliers(
         u2, v2, flags2,
@@ -222,7 +225,7 @@ def validate_pair_worker(
         kernel_size=2
     )
 
-    # D) reimponer máscara
+    # D) Reimpose mask (no rellenar dentro)
     u3[in_mask] = np.nan
     v3[in_mask] = np.nan
 
