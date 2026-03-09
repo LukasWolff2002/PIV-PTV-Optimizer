@@ -153,8 +153,8 @@ class PIVViewer:
                           valinit=0, valstep=1, color='steelblue')
 
         ax_scale = plt.axes([0.15, 0.02, 0.55, 0.025])
-        s_scale = Slider(ax_scale, "Escala", 0.5, 80.0, 
-                        valinit=cfg.default_quiver_scale, valstep=0.5,
+        s_scale = Slider(ax_scale, "Escala", 0.1, 10.0, 
+                        valinit=1.0, valstep=0.1,
                         color='coral')
         
         # Botón de reset
@@ -225,7 +225,7 @@ class PIVViewer:
                                  scale=scale, width=cfg.quiver_width)
                 artist_mgr.register('vel', q)
 
-            ax_vel.set_title(f"Velocidades lineales (normalizadas): {names[idx]}", fontweight='bold', fontsize=11)
+            ax_vel.set_title(f"Campo de Velocidades - Frame {idx}", fontweight='bold', fontsize=12)
             ax_vel.set_xlabel("x [mm]")
             ax_vel.set_ylabel("y [mm]")
             ax_vel.set_aspect("equal")
@@ -245,7 +245,7 @@ class PIVViewer:
                                 s=40, color="limegreen", zorder=5, 
                                 edgecolors='black', linewidths=1)
 
-            ax_uv.set_title("Espacio u-v (validación)", fontweight='bold', fontsize=11)
+            ax_uv.set_title("Espacio de Velocidades (u-v)", fontweight='bold', fontsize=12)
             ax_uv.set_xlabel("u [mm/s]")
             ax_uv.set_ylabel("v [mm/s]")
             ax_uv.grid(True, alpha=0.3)
@@ -278,12 +278,12 @@ class PIVViewer:
     def show_final(self, finals: List[PIVResultFinal], names: List[str], cfg: PIVConfig) -> None:
         """Visualización final con grid 2x2 (velocidades + vorticidad)"""
         
-        # Crear figura con grid 2x2
-        fig = plt.figure(figsize=(14, 10))
+        # Crear figura con grid 2x2 - campos más grandes
+        fig = plt.figure(figsize=(16, 10))
         gs = fig.add_gridspec(nrows=2, ncols=2,
-                             width_ratios=[1.4, 1.0],
+                             width_ratios=[2.0, 1.0],  # ← campos 2× más anchos
                              height_ratios=[1.0, 1.0],
-                             hspace=0.30, wspace=0.25)
+                             hspace=0.30, wspace=0.30)
         
         # Fila 1: Velocidades lineales
         ax_vel = fig.add_subplot(gs[0, 0])
@@ -295,14 +295,14 @@ class PIVViewer:
         
         plt.subplots_adjust(bottom=0.12)
 
-        # Sliders
+        # Sliders - mismo rango y valor inicial que show_initial
         ax_momento = plt.axes([0.15, 0.06, 0.55, 0.025])
         s_momento = Slider(ax_momento, "Frame", 0, len(finals) - 1,
                           valinit=0, valstep=1, color='steelblue')
 
         ax_scale = plt.axes([0.15, 0.02, 0.55, 0.025])
-        s_scale = Slider(ax_scale, "Escala", 0.5, 80.0,
-                        valinit=cfg.default_quiver_scale, valstep=0.5,
+        s_scale = Slider(ax_scale, "Escala", 0.1, 10.0,
+                        valinit=1.0, valstep=0.1,
                         color='coral')
         
         # Botón de reset
@@ -368,7 +368,7 @@ class PIVViewer:
                 vmax = vmin + 1e-6
 
             norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-            cmap_vel = plt.get_cmap("viridis")
+            cmap_vel = plt.get_cmap("plasma")  # Mismo colormap que vorticidad
 
             # Subsampling inteligente
             subsample = max(1, len(r.x_mm[valid].flatten()) // 2000)
@@ -392,8 +392,8 @@ class PIVViewer:
 
             artist_mgr.register('vel', q)
 
-            ax_vel.set_title(f"Velocidades lineales (normalizadas): {names[idx]}", 
-                           fontweight='bold', fontsize=11)
+            ax_vel.set_title(f"Campo de Velocidades Validado - Frame {idx}", 
+                           fontweight='bold', fontsize=12)
             ax_vel.set_xlabel("x [mm]")
             ax_vel.set_ylabel("y [mm]")
             ax_vel.set_aspect("equal")
@@ -402,7 +402,7 @@ class PIVViewer:
             # Scatter u-v coloreado
             sc = ax_uv.scatter(uvals, vvals, c=speed, cmap=cmap_vel, norm=norm,
                              s=10, alpha=0.6, edgecolors='black', linewidths=0.2)
-            ax_uv.set_title("Espacio u-v (validado)", fontweight='bold', fontsize=11)
+            ax_uv.set_title("Espacio de Velocidades (u-v)", fontweight='bold', fontsize=12)
             ax_uv.set_xlabel("u [mm/s]")
             ax_uv.set_ylabel("v [mm/s]")
             ax_uv.grid(True, alpha=0.3)
@@ -436,8 +436,15 @@ class PIVViewer:
                     else:
                         omega_norm = omega
                     
+                    # IMPORTANTE: poner NaN en zonas enmascaradas para que aparezcan blancas
+                    omega_norm_masked = omega_norm.copy()
+                    omega_norm_masked[~valid] = np.nan
+                    
                     # Suavizar para mejor visualización
-                    omega_smooth = gaussian_filter(np.nan_to_num(omega_norm, 0), sigma=1.0)
+                    omega_smooth = gaussian_filter(np.nan_to_num(omega_norm_masked, 0), sigma=1.0)
+                    
+                    # Restaurar NaN después del suavizado para que aparezcan blancas
+                    omega_smooth[~valid] = np.nan
                     
                     # Usar rango simétrico normalizado
                     vmin_om = -1.0
@@ -445,18 +452,18 @@ class PIVViewer:
                     
                     levels = np.linspace(vmin_om, vmax_om, 21)
                     contf = ax_omega.contourf(r.x_mm, r.y_mm, omega_smooth,
-                                              levels=levels, cmap='RdBu_r',
+                                              levels=levels, cmap='plasma',  # Mismo colormap
                                               alpha=0.7, extend='neither')
                     
                     if 'omega' not in cbar_refs:
                         cbar_refs['omega'] = plt.colorbar(contf, ax=ax_omega, 
-                                                         label='ω/ω_max (normalizado)',
+                                                         label='ω/ω_max',
                                                          fraction=0.046, pad=0.04)
                     
                     artist_mgr.register('omega', contf)
 
-            ax_omega.set_title(f"Vorticidad ω (normalizada): {names[idx]}", 
-                             fontweight='bold', fontsize=11)
+            ax_omega.set_title(f"Campo de Vorticidad - Frame {idx}", 
+                             fontweight='bold', fontsize=12)
             ax_omega.set_xlabel("x [mm]")
             ax_omega.set_ylabel("y [mm]")
             ax_omega.set_aspect("equal")
@@ -475,7 +482,7 @@ class PIVViewer:
                                          linewidth=2, alpha=0.7, label='Mediana')
                     ax_omega_dist.legend(fontsize=9)
 
-            ax_omega_dist.set_title("Distribución de ω", fontweight='bold', fontsize=11)
+            ax_omega_dist.set_title("Distribución de Vorticidad", fontweight='bold', fontsize=12)
             ax_omega_dist.set_xlabel("ω [1/s]")
             ax_omega_dist.set_ylabel("Frecuencia")
             ax_omega_dist.grid(True, alpha=0.3, axis='y')

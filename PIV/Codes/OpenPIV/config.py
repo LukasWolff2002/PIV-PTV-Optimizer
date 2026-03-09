@@ -54,7 +54,7 @@ class PIVConfig:
     # Local median validation
     # =========================
     lm_kernel: int = 1
-    lm_thresh: float = 2.0
+    lm_thresh: float = 3.0
     lm_eps: float = 0.1
 
     # =========================

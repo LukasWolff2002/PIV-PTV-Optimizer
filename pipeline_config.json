@@ -40,8 +40,8 @@
     "masks_out_dir": "Masks\\m72-toma-1-cam-4-n-0-car-02-piv",
     "blocks": 50,
     "block_size": 22,
-    "skip_inter": 0,
-    "skip_final": 20,
+    "skip_inter": 1,
+    "skip_final": 19,
     "delete_existing": true
   },
   "masks": {
@@ -82,7 +82,7 @@
     "mask_threshold": 0.0,
     "keep_percentile": 80.0,
     "lm_kernel": 1,
-    "lm_thresh": 2.0,
+    "lm_thresh": 3.0,
     "lm_eps": 0.1,
     "show_viewers": true,
     "clear_txt_before_export": true
