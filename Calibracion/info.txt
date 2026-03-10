@@ -1,0 +1,7 @@
+Cam 1 => 1 cm = 80 px
+
+Cam 2 => 1 cm = 78 px
+
+Cam 3 => 1 cm = 78 px
+
+Cam 4 => 1 cm = 107 px
