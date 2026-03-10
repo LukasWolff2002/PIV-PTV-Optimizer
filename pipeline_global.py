@@ -87,10 +87,10 @@ CAM_PROFILES = {
 }
 
 # --- Preprocess: muestreo por bloques ---
-BLOCKS      = 200
-BLOCK_SIZE  = 11
-SKIP_INTER  = 0
-SKIP_FINAL  = 9
+BLOCKS      = 50
+BLOCK_SIZE  = 22
+SKIP_INTER  = 1
+SKIP_FINAL  = 19
 DELETE_EXISTING_PRE = True
 
 # --- Modelo YOLO máscaras (para PIV) ---
@@ -108,7 +108,7 @@ SIG2NOISE_METHOD   = "peak2peak"
 MASK_THRESHOLD = 0.0
 KEEP_PERCENTILE = 80.0
 LM_KERNEL = 1
-LM_THRESH = 2.0
+LM_THRESH = 3.0
 LM_EPS    = 0.1
 SHOW_VIEWERS = True
 CLEAR_TXT = True

@@ -37,8 +37,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # =========================
 # CONFIG
 # =========================
-IMAGES_DIR = Path(r"TomasProcesadas\Cam3\m72-toma-1-cam-3-n-0-car-02-piv")
-MASKS_DIR  = Path(r"Masks\Cam3\m72-toma-1-cam-3-n-0-car-02-piv")
+IMAGES_DIR = Path(r"TomasProcesadas\m72-toma-1-cam-3-n-0-car-02-piv")
+
+MASKS_DIR  = Path(r"Masks\m72-toma-1-cam-3-n-0-car-02-piv")
 
 OUT_DIR    = Path(r"Resultados_openPIV\Cam3")
 

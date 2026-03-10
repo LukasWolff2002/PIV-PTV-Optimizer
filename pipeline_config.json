@@ -1,22 +1,36 @@
 {
   "meta": {
+<<<<<<< HEAD
     "cam": 1,
+=======
+    "cam": 4,
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "cam_profile": {
-      "fps": 200,
+      "fps": 600,
       "dt_ms": 1.0,
       "px_per_mm": 20.0,
       "width_px": 1024,
       "height_px": 1024,
       "apply_dynamic_mask": true,
       "apply_static_mask": false,
+<<<<<<< HEAD
       "fixed_mask_path": "FixMasks\\cam-1.tiff"
     },
     "pre_subfolder": "m72-toma-1-cam-1-n-0-car-02-piv",
+=======
+      "fixed_mask_path": "FixMasks\\cam-4.tiff"
+    },
+    "pre_subfolder": "m72-toma-1-cam-4-n-0-car-02-piv",
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "ptv_subfolder": null,
     "pre_info": {
       "mezcla": "72",
       "toma": "1",
+<<<<<<< HEAD
       "cam": "1",
+=======
+      "cam": "4",
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
       "n": "0",
       "car": "02",
       "metodo": "piv"
@@ -24,14 +38,20 @@
     "ptv_info": null
   },
   "camera": {
+<<<<<<< HEAD
     "cam": 1,
     "fps": 200,
+=======
+    "cam": 4,
+    "fps": 600,
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "dt_ms": 1.0,
     "px_per_mm": 20.0,
     "width_px": 1024,
     "height_px": 1024,
     "apply_dynamic_mask": true,
     "apply_static_mask": false,
+<<<<<<< HEAD
     "fixed_mask_path": "FixMasks\\cam-1.tiff"
   },
   "pre": {
@@ -42,31 +62,61 @@
     "block_size": 11,
     "skip_inter": 0,
     "skip_final": 9,
+=======
+    "fixed_mask_path": "FixMasks\\cam-4.tiff"
+  },
+  "pre": {
+    "input_subdir": "PIV\\Tomas\\m72-toma-1-cam-4-n-0-car-02-piv",
+    "dest_out_dir": "TomasProcesadas\\m72-toma-1-cam-4-n-0-car-02-piv",
+    "masks_out_dir": "Masks\\m72-toma-1-cam-4-n-0-car-02-piv",
+    "blocks": 50,
+    "block_size": 22,
+    "skip_inter": 1,
+    "skip_final": 19,
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "delete_existing": true
   },
   "masks": {
     "model_path": "PIV\\Codes\\Segmentation-Models\\DynamicMask.pt",
+<<<<<<< HEAD
     "images_dir": "TomasProcesadas\\m72-toma-1-cam-1-n-0-car-02-piv",
     "output_dir": "Masks\\m72-toma-1-cam-1-n-0-car-02-piv",
+=======
+    "images_dir": "TomasProcesadas\\m72-toma-1-cam-4-n-0-car-02-piv",
+    "output_dir": "Masks\\m72-toma-1-cam-4-n-0-car-02-piv",
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "conf_thresh": 0.25,
     "device": "0",
     "invert_mask": true,
     "delete_existing": true,
     "apply_dynamic_mask": true,
     "apply_static_mask": false,
+<<<<<<< HEAD
     "fixed_mask_path": "FixMasks\\cam-1.tiff"
   },
   "piv": {
     "images_dir": "TomasProcesadas\\m72-toma-1-cam-1-n-0-car-02-piv",
     "masks_dir": "Masks\\m72-toma-1-cam-1-n-0-car-02-piv",
     "out_dir": "ResultadosPIV\\m72-toma-1-cam-1-n-0-car-02-piv",
+=======
+    "fixed_mask_path": "FixMasks\\cam-4.tiff"
+  },
+  "piv": {
+    "images_dir": "TomasProcesadas\\m72-toma-1-cam-4-n-0-car-02-piv",
+    "masks_dir": "Masks\\m72-toma-1-cam-4-n-0-car-02-piv",
+    "out_dir": "ResultadosPIV\\m72-toma-1-cam-4-n-0-car-02-piv",
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "dt_ms": 1.0,
     "px_per_mm": 20.0,
     "width_px": 1024,
     "height_px": 1024,
     "apply_dynamic_mask": true,
     "apply_static_mask": false,
+<<<<<<< HEAD
     "fixed_mask_path": "FixMasks\\cam-1.tiff",
+=======
+    "fixed_mask_path": "FixMasks\\cam-4.tiff",
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "window_sizes": [
       64,
       32,
@@ -82,7 +132,7 @@
     "mask_threshold": 0.0,
     "keep_percentile": 80.0,
     "lm_kernel": 1,
-    "lm_thresh": 2.0,
+    "lm_thresh": 3.0,
     "lm_eps": 0.1,
     "show_viewers": true,
     "clear_txt_before_export": true
@@ -92,12 +142,16 @@
     "out_dir": null,
     "weights_path": "PTV-Codes\\Segmentation-Models\\yolo11ssef.pt",
     "runs_segment_dir": "runs\\segment",
-    "fps": 200,
+    "fps": 600,
     "width_px": 1024,
     "height_px": 1024,
     "apply_dynamic_mask": true,
     "apply_static_mask": false,
+<<<<<<< HEAD
     "fixed_mask_path": "FixMasks\\cam-1.tiff",
+=======
+    "fixed_mask_path": "FixMasks\\cam-4.tiff",
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "max_images": null,
     "alpha": 0.95,
     "beta": 0.95,
@@ -110,8 +164,13 @@
     "annotate": true
   },
   "cleanup": {
+<<<<<<< HEAD
     "processed_dir_to_delete": "TomasProcesadas\\m72-toma-1-cam-1-n-0-car-02-piv",
     "masks_dir_to_delete": "Masks\\m72-toma-1-cam-1-n-0-car-02-piv",
+=======
+    "processed_dir_to_delete": "TomasProcesadas\\m72-toma-1-cam-4-n-0-car-02-piv",
+    "masks_dir_to_delete": "Masks\\m72-toma-1-cam-4-n-0-car-02-piv",
+>>>>>>> 0ac7aa8e17af15fd5b85c2de9ee2d38ff2846c9c
     "delete_processed_subfolders": true,
     "delete_predict_folders": false,
     "runs_segment_dir": "runs\\segment"
