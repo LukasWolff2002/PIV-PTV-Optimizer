@@ -14,7 +14,7 @@ import tifffile
 # ============================================================
 # CONFIG USUARIO
 # ============================================================
-TIFF_PATH = r"BasePhotos/PIV/cam1.tiff"
+TIFF_PATH = r"BasePhotos/PIV/cam4.tiff"
 OUT_DIR   = r"FixMasks"
 
 WINDOW_NAME = "TIFF Polygon Annotator"
@@ -259,7 +259,7 @@ def save_binary_mask_tiff(out_dir: str | Path, st: PolyEditorState, tiff_path: s
     out_dir.mkdir(parents=True, exist_ok=True)
 
     H, W = img_shape_hw
-    mask = np.zeros((H, W), dtype=np.uint8)
+    mask = np.full((H, W), 255, dtype=np.uint8)
 
     for poly in st.polys_closed:
         if len(poly) >= 3:
@@ -268,7 +268,7 @@ def save_binary_mask_tiff(out_dir: str | Path, st: PolyEditorState, tiff_path: s
             pts[:, 0] = np.clip(pts[:, 0], 0, W - 1)
             pts[:, 1] = np.clip(pts[:, 1], 0, H - 1)
             pts = pts.reshape((-1, 1, 2))
-            cv2.fillPoly(mask, [pts], 255)
+            cv2.fillPoly(mask, [pts], 0)
 
     in_name = Path(tiff_path).name
     out_path = out_dir / in_name
