@@ -74,7 +74,7 @@ CAM_PROFILES = {
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
-        apply_static_mask=False,
+        apply_static_mask=True,
     ),
     3: dict(
         fps=200,
@@ -83,7 +83,7 @@ CAM_PROFILES = {
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
-        apply_static_mask=False,
+        apply_static_mask=True,
     ),
     4: dict(
         fps=600,
@@ -92,7 +92,7 @@ CAM_PROFILES = {
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
-        apply_static_mask=False,
+        apply_static_mask=True,
     ),
 }
 
