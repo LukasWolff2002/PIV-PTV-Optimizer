@@ -13,6 +13,8 @@ def main() -> None:
     pre = cfg["pre"]
     masks = cfg["masks"]
 
+    preprocess_params = pre.get("preprocess_params", None)
+
     # 1) Preprocess (pares)
     run_block_sampling(
         input_dir=Path(pre["input_subdir"]),
@@ -24,6 +26,7 @@ def main() -> None:
         delete_existing=bool(pre["delete_existing"]),
         natural_sort=True,
         overwrite=True,
+        preprocess_params=preprocess_params,
     )
 
     # 2) Masks

@@ -86,6 +86,86 @@ CAM_PROFILES = {
     ),
 }
 
+CAM_PREPROCESS_PARAMS = {
+    'cam1': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 200,
+        'clahe_clip_limit': 0.0010,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0395,
+        'max_intensity': 1.0000,
+    },
+    'cam2': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 17,
+        'clahe_clip_limit': 0.0492,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 14,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0000,
+        'max_intensity': 1.0000,
+    },
+    'cam3': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 10,
+        'clahe_clip_limit': 0.1000,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0000,
+        'max_intensity': 1.0000,
+    },
+    'cam4': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 10,
+        'clahe_clip_limit': 0.0100,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0000,
+        'max_intensity': 0.7237,
+    },
+}
+
+
 # --- Preprocess: muestreo por bloques ---
 BLOCKS      = 50
 BLOCK_SIZE  = 22
@@ -208,6 +288,8 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
     pre_name = pre_sub.name if pre_sub else ""
     ptv_name = ptv_sub.name if ptv_sub else ""
 
+    preprocess_params = CAM_PREPROCESS_PARAMS.get(cam, {})
+
     # fixed mask
     fixed_mask_path = Path(prof["fixed_mask_path"]) if prof.get("fixed_mask_path") else None
 
@@ -245,7 +327,8 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
             "block_size": BLOCK_SIZE,
             "skip_inter": SKIP_INTER,
             "skip_final": SKIP_FINAL,
-            "delete_existing": DELETE_EXISTING_PRE
+            "delete_existing": DELETE_EXISTING_PRE,
+            "preprocess_params": preprocess_params
         },
 
         "masks": {
