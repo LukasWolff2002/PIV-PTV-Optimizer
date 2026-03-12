@@ -176,7 +176,7 @@ CAM_PREPROCESS_PARAMS = {
 }
 
 # --- Preprocess: muestreo por bloques ---
-BLOCKS      = 50
+BLOCKS      = None
 BLOCK_SIZE  = 22
 SKIP_INTER  = 0
 SKIP_FINAL  = 20
