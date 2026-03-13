@@ -9,7 +9,7 @@ import re
 # 1) USER INPUTS
 # ============================================================
 
-RUN_MODE = "piv"  # "piv" | "ptv" | "both"
+RUN_MODE = "ptv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
 CONDA_BAT = r"C:\Users\MBX\anaconda3\condabin\conda.bat"
@@ -175,6 +175,85 @@ CAM_PREPROCESS_PARAMS = {
     },
 }
 
+CAM_PREPROCESS_PARAMS_PTV = {
+    'cam1': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 175,
+        'clahe_clip_limit': 0.1000,
+        'intensity_capping': True,
+        'capping_n_std': 3.1053,
+        'highpass_enabled': False,
+        'highpass_size': 28,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.1579,
+        'max_intensity': 0.7368,
+    },
+    'cam2': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 155,
+        'clahe_clip_limit': 0.0010,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 14,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.1974,
+        'max_intensity': 0.8421,
+    },
+    'cam3': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 159,
+        'clahe_clip_limit': 0.1000,
+        'intensity_capping': True,
+        'capping_n_std': 1.9474,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.1053,
+        'max_intensity': 0.7763,
+    },
+    'cam4': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 200,
+        'clahe_clip_limit': 0.0635,
+        'intensity_capping': True,
+        'capping_n_std': 3.1053,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.1053,
+        'max_intensity': 0.8289,
+    },
+}
+
 # --- Preprocess: muestreo por bloques ---
 BLOCKS      = None
 BLOCK_SIZE  = 22
@@ -203,11 +282,11 @@ SHOW_VIEWERS = True
 CLEAR_TXT = True
 
 # --- Modelo YOLO tracking (PTV) ---
-YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV-Codes" / "Segmentation-Models" / "yolo11ssef.pt"
+YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
 RUNS_SEGMENT_DIR = PROJECT_ROOT / "runs" / "segment"
 
 # --- Parámetros PTV (comunes) ---
-MAX_IMAGES = None
+MAX_IMAGES = 100
 ALPHA = 0.95
 BETA  = 0.95
 GAMMA = 0.05
@@ -299,7 +378,8 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
     ptv_name = ptv_sub.name if ptv_sub else ""
 
     preprocess_params = CAM_PREPROCESS_PARAMS.get(f"cam{cam}", {})
-
+    ptv_preprocess_params = CAM_PREPROCESS_PARAMS_PTV.get(f"cam{cam}", {})
+    
     fixed_mask_path = Path(prof["fixed_mask_path"]) if prof.get("fixed_mask_path") else None
 
     cfg = {
@@ -394,6 +474,7 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
             "conf": CONF_TRACK,
             "min_frames_keep": MIN_FRAMES_KEEP,
             "annotate": ANNOTATE,
+            "preprocess_params": ptv_preprocess_params,
         },
 
         "cleanup": {
