@@ -5,16 +5,87 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.widgets import Slider, Button
+from matplotlib.patches import FancyBboxPatch
 from scipy.ndimage import gaussian_filter
+from scipy.interpolate import griddata
 
 from .models import PIVResult, PIVResultFinal
 from .config import PIVConfig
 from .validation import velocity_region_mask
 
 
-# ---------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------
+# ===============================================================
+# Estilo unificado
+# ===============================================================
+
+STYLE = {
+    "figure_bg": "#ffffff",
+    "panel_bg": "#f6f8fb",
+    "axes_bg": "#ffffff",
+    "spine": "#334155",
+    "grid": "#cbd5e1",
+    "text": "#0f172a",
+    "muted": "#64748b",
+    "valid": "#16a34a",
+    "invalid": "#dc2626",
+    "accent": "#2563eb",
+    "accent_soft": "#93c5fd",
+    "neutral": "#94a3b8",
+    "zero": "#475569",
+    "vorticity_cmap": "RdBu_r",
+    "speed_cmap": "viridis",
+}
+
+
+def _setup_matplotlib_style() -> None:
+    plt.rcParams.update({
+        "figure.facecolor": STYLE["figure_bg"],
+        "axes.facecolor": STYLE["axes_bg"],
+        "axes.edgecolor": STYLE["spine"],
+        "axes.labelcolor": STYLE["text"],
+        "axes.titlecolor": STYLE["text"],
+        "xtick.color": STYLE["muted"],
+        "ytick.color": STYLE["muted"],
+        "grid.color": STYLE["grid"],
+        "grid.alpha": 0.25,
+        "grid.linestyle": "--",
+        "grid.linewidth": 0.7,
+        "font.size": 10,
+        "axes.titlesize": 12,
+        "axes.labelsize": 10,
+        "legend.frameon": True,
+        "legend.facecolor": "#ffffff",
+        "legend.edgecolor": "#cbd5e1",
+        "legend.framealpha": 0.95,
+    })
+
+
+def _style_axes(ax, equal: bool = False) -> None:
+    ax.set_facecolor(STYLE["axes_bg"])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color(STYLE["spine"])
+    ax.spines["bottom"].set_color(STYLE["spine"])
+    ax.spines["left"].set_linewidth(1.0)
+    ax.spines["bottom"].set_linewidth(1.0)
+    ax.tick_params(labelsize=9, colors=STYLE["muted"])
+    ax.grid(True)
+    if equal:
+        ax.set_aspect("equal", adjustable="box")
+
+
+def _style_title(ax, title: str) -> None:
+    ax.set_title(title, loc="left", pad=10, fontweight="semibold", color=STYLE["text"])
+
+
+def _force_square_axes(*axes) -> None:
+    for ax in axes:
+        ax.set_box_aspect(1)
+
+
+# ===============================================================
+# Helpers numéricos
+# ===============================================================
 
 def _compute_vorticity(
     u: np.ndarray,
@@ -26,42 +97,28 @@ def _compute_vorticity(
     """
     Calcula vorticidad omega = (dv/dx - du/dy) / 2
     usando diferencias finitas centrales.
-
-    Args:
-        u, v: campos de velocidad (grids 2D)
-        x, y: coordenadas (grids 2D)
-        valid_mask: máscara de puntos válidos
-
-    Returns:
-        omega: vorticidad [1/s], mismo shape que u/v
     """
     omega = np.full_like(u, np.nan)
 
-    # Calcular espaciado (asumiendo grid regular)
     if x.shape[1] > 1 and x.shape[0] > 1:
         dx = np.mean(np.diff(x[0, :]))
         dy = np.mean(np.diff(y[:, 0]))
     else:
         return omega
 
-    # Diferencias centrales con manejo de bordes
     dvdx = np.full_like(v, np.nan)
     dudy = np.full_like(u, np.nan)
 
-    # Interior: diferencias centrales
     dvdx[:, 1:-1] = (v[:, 2:] - v[:, :-2]) / (2 * dx)
     dudy[1:-1, :] = (u[2:, :] - u[:-2, :]) / (2 * dy)
 
-    # Bordes: diferencias hacia adelante/atrás
     dvdx[:, 0] = (v[:, 1] - v[:, 0]) / dx
     dvdx[:, -1] = (v[:, -1] - v[:, -2]) / dx
     dudy[0, :] = (u[1, :] - u[0, :]) / dy
     dudy[-1, :] = (u[-1, :] - u[-2, :]) / dy
 
-    # Calcular vorticidad solo donde ambos gradientes son válidos
     omega = (dvdx - dudy) / 2.0
     omega[~valid_mask] = np.nan
-
     return omega
 
 
@@ -71,7 +128,6 @@ def _precompute_hulls(
 ) -> List[Tuple[np.ndarray, Optional[np.ndarray], np.ndarray]]:
     """
     Precalcula valid mask, hull y inside para cada resultado.
-    Evita recalcular en cada redibujado del slider.
     """
     precomputed = []
     for r in results:
@@ -91,14 +147,9 @@ def _precompute_hulls(
     return precomputed
 
 
-def _force_square_axes(*axes) -> None:
-    """
-    Fuerza que todos los axes tengan caja cuadrada.
-    Para ejes espaciales conviene además usar aspect='equal'.
-    """
-    for ax in axes:
-        ax.set_box_aspect(1)
-
+# ===============================================================
+# Panel lateral unificado
+# ===============================================================
 
 def _create_right_panel(
     fig: plt.Figure,
@@ -106,43 +157,27 @@ def _create_right_panel(
     n_frames: int,
     frame_init: int = 0,
     scale_init: float = 1.0,
-    panel_facecolor: str = "#f8f9fa",
 ) -> Tuple[Any, Slider, Slider, Button]:
-    """
-    Crea panel derecho moderno y compacto con todos los elementos visibles.
-
-    Devuelve:
-      ax_panel, s_momento, s_scale, btn_reset
-    """
     ax_panel = fig.add_subplot(panel_spec)
-    ax_panel.set_facecolor(panel_facecolor)
+    ax_panel.set_facecolor(STYLE["panel_bg"])
     ax_panel.set_xticks([])
     ax_panel.set_yticks([])
-    for spine in ax_panel.spines.values():
-        spine.set_edgecolor('#dee2e6')
-        spine.set_linewidth(2.0)
+    for s in ax_panel.spines.values():
+        s.set_color("#dbe3ec")
+        s.set_linewidth(1.0)
 
     pos = ax_panel.get_position()
     x0, y0, w, h = pos.x0, pos.y0, pos.width, pos.height
 
-    # Título
-    ax_title = fig.add_axes(
-        [x0 + 0.05 * w, y0 + 0.90 * h, 0.90 * w, 0.08 * h],
-        facecolor=panel_facecolor
-    )
+    ax_title = fig.add_axes([x0 + 0.08 * w, y0 + 0.90 * h, 0.84 * w, 0.06 * h], facecolor=STYLE["panel_bg"])
     ax_title.axis("off")
     ax_title.text(
-        0.5, 0.5, "Panel de Control",
-        ha="center", va="center",
-        fontsize=12, fontweight="600",
-        color="#2c3e50"
+        0.0, 0.5, "Controles",
+        ha="left", va="center",
+        fontsize=11, fontweight="semibold", color=STYLE["text"]
     )
 
-    # Slider Frame
-    ax_momento = fig.add_axes(
-        [x0 + 0.15 * w, y0 + 0.76 * h, 0.70 * w, 0.04 * h],
-        facecolor=panel_facecolor
-    )
+    ax_momento = fig.add_axes([x0 + 0.12 * w, y0 + 0.78 * h, 0.76 * w, 0.035 * h], facecolor=STYLE["panel_bg"])
     s_momento = Slider(
         ax=ax_momento,
         label="Frame",
@@ -150,126 +185,82 @@ def _create_right_panel(
         valmax=max(0, n_frames - 1),
         valinit=frame_init,
         valstep=1,
-        color="#3498db",
-        track_color="#e9ecef"
+        color=STYLE["accent"],
+        track_color="#dbeafe"
     )
-    s_momento.label.set_fontsize(10)
-    s_momento.label.set_fontweight("500")
+    s_momento.label.set_fontsize(9)
     s_momento.valtext.set_fontsize(9)
 
-    # Slider Escala
-    ax_scale = fig.add_axes(
-        [x0 + 0.15 * w, y0 + 0.66 * h, 0.70 * w, 0.04 * h],
-        facecolor=panel_facecolor
-    )
+    ax_scale = fig.add_axes([x0 + 0.12 * w, y0 + 0.68 * h, 0.76 * w, 0.035 * h], facecolor=STYLE["panel_bg"])
     s_scale = Slider(
         ax=ax_scale,
         label="Escala",
-        valmin=0.1,
-        valmax=10.0,
+        valmin=0.2,
+        valmax=4.0,
         valinit=scale_init,
-        valstep=0.1,
-        color="#e74c3c",
-        track_color="#e9ecef"
+        valstep=0.05,
+        color=STYLE["accent"],
+        track_color="#dbeafe"
     )
-    s_scale.label.set_fontsize(10)
-    s_scale.label.set_fontweight("500")
+    s_scale.label.set_fontsize(9)
     s_scale.valtext.set_fontsize(9)
 
-    # Botón reset
-    ax_reset = fig.add_axes(
-        [x0 + 0.20 * w, y0 + 0.56 * h, 0.60 * w, 0.06 * h],
-        facecolor=panel_facecolor
-    )
+    ax_reset = fig.add_axes([x0 + 0.22 * w, y0 + 0.58 * h, 0.56 * w, 0.05 * h], facecolor=STYLE["panel_bg"])
     btn_reset = Button(
         ax=ax_reset,
-        label="Restablecer",
-        color="#e9ecef",
-        hovercolor="#ced4da"
+        label="Reset",
+        color="#e2e8f0",
+        hovercolor="#cbd5e1"
     )
-    btn_reset.label.set_fontsize(10)
-    btn_reset.label.set_fontweight("500")
-    btn_reset.label.set_color("#2c3e50")
+    btn_reset.label.set_fontsize(9)
+    btn_reset.label.set_color(STYLE["text"])
 
-    # Separador visual
-    ax_sep = fig.add_axes(
-        [x0 + 0.10 * w, y0 + 0.52 * h, 0.80 * w, 0.005 * h],
-        facecolor=panel_facecolor
-    )
-    ax_sep.axis("off")
-    ax_sep.axhline(0.5, color='#ced4da', linewidth=1.5, alpha=0.7)
-
-    # Bloque informativo compacto
-    ax_info = fig.add_axes(
-        [x0 + 0.08 * w, y0 + 0.15 * h, 0.84 * w, 0.35 * h],
-        facecolor=panel_facecolor
-    )
+    ax_info = fig.add_axes([x0 + 0.08 * w, y0 + 0.12 * h, 0.84 * w, 0.34 * h], facecolor=STYLE["panel_bg"])
     ax_info.axis("off")
-    
-    # Rectángulo de fondo
-    from matplotlib.patches import FancyBboxPatch
-    fancy_box = FancyBboxPatch(
-        (0.0, 0.0), 1.0, 1.0,
-        boxstyle="round,pad=0.02",
+
+    card = FancyBboxPatch(
+        (0, 0), 1, 1,
+        boxstyle="round,pad=0.012,rounding_size=0.02",
         transform=ax_info.transAxes,
         facecolor="#ffffff",
-        edgecolor="#ced4da",
-        linewidth=1.2,
-        alpha=0.9
+        edgecolor="#dbe3ec",
+        linewidth=1.0
     )
-    ax_info.add_patch(fancy_box)
-    
+    ax_info.add_patch(card)
+
     ax_info.text(
-        0.5, 0.88,
-        "Instrucciones",
-        ha="center", va="top",
-        fontsize=10, fontweight="600",
-        color="#2c3e50",
+        0.06, 0.88, "Uso",
+        ha="left", va="center",
+        fontsize=10, fontweight="semibold", color=STYLE["text"],
         transform=ax_info.transAxes
     )
-    ax_info.text(
-        0.12, 0.68,
-        "• Frame\n  Navegación temporal",
-        va="top",
-        fontsize=8.5,
-        color="#495057",
-        transform=ax_info.transAxes,
-        linespacing=1.5
+
+    info_text = (
+        "• Frame: recorre los resultados en el tiempo\n\n"
+        "• Escala: ajusta la longitud de los vectores\n\n"
+        "• Reset: vuelve a los valores iniciales"
     )
     ax_info.text(
-        0.12, 0.38,
-        "• Escala\n  Longitud de vectores",
-        va="top",
-        fontsize=8.5,
-        color="#495057",
-        transform=ax_info.transAxes,
-        linespacing=1.5
-    )
-    ax_info.text(
-        0.12, 0.08,
-        "• Restablecer\n  Valores iniciales",
-        va="top",
-        fontsize=8.5,
-        color="#495057",
-        transform=ax_info.transAxes,
-        linespacing=1.5
+        0.06, 0.76, info_text,
+        ha="left", va="top",
+        fontsize=8.8, color=STYLE["muted"],
+        transform=ax_info.transAxes, linespacing=1.5
     )
 
     return ax_panel, s_momento, s_scale, btn_reset
 
 
-# ---------------------------------------------------------------
-# Optimized Artist Manager
-# ---------------------------------------------------------------
+# ===============================================================
+# Artist manager
+# ===============================================================
 
 class ArtistManager:
-    """Gestiona artists de matplotlib para blitting eficiente"""
+    """Gestiona artists para redraw limpio."""
 
     def __init__(self):
         self.artists: Dict[str, List[Any]] = {}
 
     def register(self, key: str, artist):
-        """Registra un artist para tracking"""
         if key not in self.artists:
             self.artists[key] = []
         if isinstance(artist, list):
@@ -278,7 +269,6 @@ class ArtistManager:
             self.artists[key].append(artist)
 
     def clear(self, key: str):
-        """Limpia artists de una clave"""
         if key in self.artists:
             for artist in self.artists[key]:
                 try:
@@ -288,37 +278,36 @@ class ArtistManager:
             self.artists[key] = []
 
     def clear_all(self):
-        """Limpia todos los artists"""
         for key in list(self.artists.keys()):
             self.clear(key)
 
 
-# ---------------------------------------------------------------
+# ===============================================================
 # Viewer
-# ---------------------------------------------------------------
+# ===============================================================
 
 class PIVViewer:
 
     def show_initial(self, results: List[PIVResult], names: List[str], cfg: PIVConfig) -> None:
-        """Visualización inicial con panel de control mejorado."""
+        """Vista inicial con estética uniforme."""
+        _setup_matplotlib_style()
         print("[PIV] Precalculando velocity regions para viewer...", flush=True)
         precomputed = _precompute_hulls(results, cfg.keep_percentile)
 
-        # Configurar estilo moderno
-        plt.style.use('seaborn-v0_8-darkgrid')
-        
-        # Layout mejorado con panel más ancho
-        fig = plt.figure(figsize=(17.5, 7.2), facecolor='white')
-        fig.suptitle("Análisis PIV - Vista Inicial", 
-                     fontsize=15, fontweight='600', 
-                     color="#2c3e50", y=0.98)
-        
+        fig = plt.figure(figsize=(16.8, 7.0), facecolor=STYLE["figure_bg"])
+        fig.suptitle(
+            "Análisis PIV · Vista inicial",
+            fontsize=14,
+            fontweight="semibold",
+            color=STYLE["text"],
+            y=0.97
+        )
+
         gs = fig.add_gridspec(
-            nrows=1,
-            ncols=3,
-            width_ratios=[1.0, 1.0, 0.45],  # Panel más ancho
+            1, 3,
+            width_ratios=[1.0, 1.0, 0.38],
             wspace=0.28,
-            left=0.05, right=0.98, top=0.93, bottom=0.08
+            left=0.05, right=0.98, top=0.92, bottom=0.08
         )
 
         ax_vel = fig.add_subplot(gs[0, 0])
@@ -329,38 +318,34 @@ class PIVViewer:
             panel_spec=gs[0, 2],
             n_frames=len(results),
             frame_init=0,
-            scale_init=1.0,
+            scale_init=1.0
         )
 
         mm_per_px = cfg.mm_per_px()
         artist_mgr = ArtistManager()
 
         def draw(idx: int, scale: float) -> None:
-            """Dibuja velocidades lineales para el frame idx."""
             r = results[idx]
             valid, hull_closed, inside = precomputed[idx]
 
             artist_mgr.clear_all()
+            ax_vel.clear()
+            ax_uv.clear()
 
-            for ax in [ax_vel, ax_uv]:
-                ax.clear()
-                # Estilo mejorado para los ejes
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-                ax.spines['left'].set_linewidth(1.5)
-                ax.spines['bottom'].set_linewidth(1.5)
-                ax.spines['left'].set_color('#34495e')
-                ax.spines['bottom'].set_color('#34495e')
+            _style_axes(ax_vel, equal=True)
+            _style_axes(ax_uv, equal=False)
 
             bg = r.bg_display
             h_px, w_px = bg.shape
             extent = [0, w_px * mm_per_px, h_px * mm_per_px, 0]
 
-            # ----- VELOCIDADES LINEALES -----
-            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.75)
-
             uvals = r.u_mms[valid]
             vvals = r.v_mms[valid]
+
+            # ---------------------------------------------------
+            # Campo espacial
+            # ---------------------------------------------------
+            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.78)
 
             if uvals.size >= 10:
                 inside_grid = np.zeros_like(valid, dtype=bool)
@@ -369,7 +354,6 @@ class PIVViewer:
                 ok = inside_grid
                 bad = valid & (~inside_grid)
 
-                # Normalización por frame
                 speed_all = np.sqrt(r.u_mms**2 + r.v_mms**2)
                 max_speed = np.nanmax(speed_all)
 
@@ -380,145 +364,103 @@ class PIVViewer:
                     u_norm = r.u_mms
                     v_norm = r.v_mms
 
-                subsample = max(1, r.x_mm[ok].size // 2000)
+                # Mostrar todos los vectores y aumentar claramente su longitud visual
+                quiver_scale = max(scale * 0.12, 1e-6)
 
-                # Vectores válidos con mejor color
                 q1 = ax_vel.quiver(
-                    r.x_mm[ok][::subsample],
-                    r.y_mm[ok][::subsample],
-                    u_norm[ok][::subsample],
-                    v_norm[ok][::subsample],
-                    color="#27ae60",
+                    r.x_mm[ok], r.y_mm[ok],
+                    u_norm[ok], v_norm[ok],
+                    color=STYLE["valid"],
                     angles="xy",
                     scale_units="xy",
-                    scale=scale,
-                    width=cfg.quiver_width * 1.1,
-                    alpha=0.85,
-                    edgecolors='#1e8449',
-                    linewidths=0.3
+                    scale=quiver_scale,
+                    width=cfg.quiver_width * 1.15,
+                    alpha=0.90
                 )
-                
-                # Vectores rechazados
+
                 q2 = ax_vel.quiver(
-                    r.x_mm[bad][::subsample],
-                    r.y_mm[bad][::subsample],
-                    u_norm[bad][::subsample],
-                    v_norm[bad][::subsample],
-                    color="#e67e22",
+                    r.x_mm[bad], r.y_mm[bad],
+                    u_norm[bad], v_norm[bad],
+                    color=STYLE["invalid"],
                     angles="xy",
                     scale_units="xy",
-                    scale=scale,
-                    width=cfg.quiver_width * 1.1,
-                    alpha=0.75,
-                    edgecolors='#d35400',
-                    linewidths=0.3
+                    scale=quiver_scale,
+                    width=cfg.quiver_width * 1.15,
+                    alpha=0.75
                 )
 
                 artist_mgr.register("vel", [q1, q2])
 
-                # Leyenda mejorada
-                from matplotlib.lines import Line2D
-                legend_elements = [
-                    Line2D([0], [0], marker='>', color='w', 
-                           markerfacecolor='#27ae60', markersize=10,
-                           label=f'Validados ({np.sum(ok):,})'),
-                    Line2D([0], [0], marker='>', color='w',
-                           markerfacecolor='#e67e22', markersize=10,
-                           label=f'Rechazados ({np.sum(bad):,})')
-                ]
-                ax_vel.legend(handles=legend_elements, loc='upper right',
-                             framealpha=0.95, edgecolor='#bdc3c7',
-                             fontsize=9)
+                ax_vel.legend(
+                    handles=[
+                        plt.Line2D([0], [0], color=STYLE["valid"], lw=2, label=f"Validados ({np.sum(ok):,})"),
+                        plt.Line2D([0], [0], color=STYLE["invalid"], lw=2, label=f"Rechazados ({np.sum(bad):,})"),
+                    ],
+                    loc="upper right",
+                    fontsize=9
+                )
 
             else:
+                quiver_scale = max(scale * 0.12, 1e-6)
                 q = ax_vel.quiver(
-                    r.x_mm[valid],
-                    r.y_mm[valid],
-                    r.u_mms[valid],
-                    r.v_mms[valid],
-                    color="#e67e22",
+                    r.x_mm[valid], r.y_mm[valid],
+                    r.u_mms[valid], r.v_mms[valid],
+                    color=STYLE["invalid"],
                     angles="xy",
                     scale_units="xy",
-                    scale=scale,
-                    width=cfg.quiver_width
+                    scale=quiver_scale,
+                    width=cfg.quiver_width * 1.15,
+                    alpha=0.75
                 )
                 artist_mgr.register("vel", q)
 
-            ax_vel.set_title(f"Campo de Velocidades — Frame {idx}", 
-                           fontweight="600", fontsize=12, 
-                           color="#2c3e50", pad=12)
-            ax_vel.set_xlabel("x [mm]", fontsize=10, fontweight='500', color='#34495e')
-            ax_vel.set_ylabel("y [mm]", fontsize=10, fontweight='500', color='#34495e')
-            ax_vel.set_aspect("equal", adjustable="box")
-            ax_vel.grid(True, alpha=0.25, linestyle="--", linewidth=0.8, color='#95a5a6')
-            ax_vel.tick_params(labelsize=9, colors='#34495e')
+            _style_title(ax_vel, f"Campo de velocidades · frame {idx}")
+            ax_vel.set_xlabel("x [mm]")
+            ax_vel.set_ylabel("y [mm]")
 
-            # Scatter u-v mejorado
+            # ---------------------------------------------------
+            # Espacio u-v
+            # ---------------------------------------------------
             if uvals.size >= 10:
-                # Puntos validados
-                scatter_valid = ax_uv.scatter(
+                ax_uv.scatter(
                     uvals[inside], vvals[inside],
-                    s=12, alpha=0.65,
-                    color="#27ae60",
-                    edgecolors="#1e8449",
-                    linewidths=0.5,
-                    label=f'Validados ({np.sum(inside):,})'
+                    s=10, alpha=0.55,
+                    c=STYLE["valid"], edgecolors="none",
+                    label=f"Validados ({np.sum(inside):,})"
                 )
-                
-                # Puntos rechazados
-                scatter_invalid = ax_uv.scatter(
+                ax_uv.scatter(
                     uvals[~inside], vvals[~inside],
-                    s=12, alpha=0.55,
-                    color="#e67e22",
-                    edgecolors="#d35400",
-                    linewidths=0.5,
-                    label=f'Rechazados ({np.sum(~inside):,})'
+                    s=10, alpha=0.45,
+                    c=STYLE["invalid"], edgecolors="none",
+                    label=f"Rechazados ({np.sum(~inside):,})"
                 )
 
-                # Hull con estilo mejorado
                 if hull_closed is not None:
                     ax_uv.plot(
                         hull_closed[:, 0], hull_closed[:, 1],
-                        color="#2c3e50",
-                        linewidth=2.8,
-                        linestyle="-",
-                        alpha=0.85,
-                        label='Región validación'
-                    )
-                    ax_uv.scatter(
-                        hull_closed[:-1, 0], hull_closed[:-1, 1],
-                        s=50,
-                        color="#27ae60",
-                        zorder=5,
-                        edgecolors="#2c3e50",
-                        linewidths=1.5,
-                        marker='o'
+                        color=STYLE["spine"],
+                        linewidth=1.6,
+                        label="Región de validación"
                     )
 
-                ax_uv.legend(loc='upper right', framealpha=0.95, 
-                           edgecolor='#bdc3c7', fontsize=9)
+                ax_uv.legend(loc="upper right", fontsize=9)
 
-            ax_uv.set_title("Espacio de Velocidades (u-v)", 
-                          fontweight="600", fontsize=12,
-                          color="#2c3e50", pad=12)
-            ax_uv.set_xlabel("u [mm/s]", fontsize=10, fontweight='500', color='#34495e')
-            ax_uv.set_ylabel("v [mm/s]", fontsize=10, fontweight='500', color='#34495e')
-            ax_uv.grid(True, alpha=0.25, linestyle="--", linewidth=0.8, color='#95a5a6')
-            ax_uv.axhline(0, color="#7f8c8d", linewidth=1.2, alpha=0.5, linestyle='-')
-            ax_uv.axvline(0, color="#7f8c8d", linewidth=1.2, alpha=0.5, linestyle='-')
-            ax_uv.tick_params(labelsize=9, colors='#34495e')
+            ax_uv.axhline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
+            ax_uv.axvline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
+
+            _style_title(ax_uv, "Espacio de velocidades (u-v)")
+            ax_uv.set_xlabel("u [mm/s]")
+            ax_uv.set_ylabel("v [mm/s]")
 
             if uvals.size > 0:
                 umax = np.percentile(np.abs(uvals), 99)
                 vmax = np.percentile(np.abs(vvals), 99)
                 lim = max(umax, vmax, 1e-6)
-                margin = lim * 0.05
+                margin = lim * 0.06
                 ax_uv.set_xlim(-lim - margin, lim + margin)
                 ax_uv.set_ylim(-lim - margin, lim + margin)
 
-            # Forzar cajas cuadradas
             _force_square_axes(ax_vel, ax_uv)
-
             fig.canvas.draw_idle()
 
         def update(_val=None) -> None:
@@ -536,73 +478,56 @@ class PIVViewer:
         plt.show()
 
     def show_final(self, finals: List[PIVResultFinal], names: List[str], cfg: PIVConfig) -> None:
-        """Visualización final mejorada con streamlines visibles."""
+        """Vista final con estilo unificado."""
+        _setup_matplotlib_style()
 
-        # Configurar estilo
-        plt.style.use('seaborn-v0_8-darkgrid')
-        
-        fig = plt.figure(figsize=(19.5, 11), facecolor='white')
-        fig.suptitle("Análisis PIV — Resultados Finales", 
-                     fontsize=16, fontweight='600',
-                     color="#2c3e50", y=0.985)
-        
-        gs = fig.add_gridspec(
-            nrows=2,
-            ncols=3,
-            width_ratios=[1.0, 1.0, 0.45],  # Panel más ancho
-            height_ratios=[1.0, 1.0],
-            hspace=0.28,
-            wspace=0.26,
-            left=0.04, right=0.98, top=0.95, bottom=0.05
+        fig = plt.figure(figsize=(18.5, 10.2), facecolor=STYLE["figure_bg"])
+        fig.suptitle(
+            "Análisis PIV · Resultados finales",
+            fontsize=15,
+            fontweight="semibold",
+            color=STYLE["text"],
+            y=0.975
         )
 
-        # Grilla principal
+        gs = fig.add_gridspec(
+            2, 3,
+            width_ratios=[1.0, 1.0, 0.38],
+            height_ratios=[1.0, 1.0],
+            hspace=0.28,
+            wspace=0.28,
+            left=0.04, right=0.98, top=0.94, bottom=0.06
+        )
+
         ax_vel = fig.add_subplot(gs[0, 0])
         ax_uv = fig.add_subplot(gs[0, 1])
         ax_omega = fig.add_subplot(gs[1, 0])
         ax_omega_dist = fig.add_subplot(gs[1, 1])
 
-        # Aplicar estilo a todos los ejes
-        for ax in [ax_vel, ax_uv, ax_omega, ax_omega_dist]:
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_linewidth(1.5)
-            ax.spines['bottom'].set_linewidth(1.5)
-            ax.spines['left'].set_color('#34495e')
-            ax.spines['bottom'].set_color('#34495e')
-
-        # Panel derecho ocupando ambas filas
         _, s_momento, s_scale, btn_reset = _create_right_panel(
             fig=fig,
             panel_spec=gs[:, 2],
             n_frames=len(finals),
             frame_init=0,
-            scale_init=1.0,
+            scale_init=1.0
         )
 
         mm_per_px = cfg.mm_per_px()
         artist_mgr = ArtistManager()
-
-        # Caché para vorticidad
         omega_cache: Dict[int, np.ndarray] = {}
-
-        # Referencias para colorbars persistentes
         cbar_refs: Dict[str, Any] = {}
 
         def draw(idx: int, scale: float) -> None:
-            """Dibuja velocidades lineales, streamlines y vorticidad para el frame idx."""
             r = finals[idx]
 
             artist_mgr.clear_all()
-
             for ax in [ax_vel, ax_uv, ax_omega, ax_omega_dist]:
                 ax.clear()
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-                ax.spines['left'].set_linewidth(1.5)
-                ax.spines['bottom'].set_linewidth(1.5)
-                ax.spines['left'].set_color('#34495e')
-                ax.spines['bottom'].set_color('#34495e')
+
+            _style_axes(ax_vel, equal=True)
+            _style_axes(ax_uv, equal=False)
+            _style_axes(ax_omega, equal=True)
+            _style_axes(ax_omega_dist, equal=False)
 
             bg = r.bg_display
             h_px, w_px = bg.shape
@@ -614,34 +539,24 @@ class PIVViewer:
 
             if uvals.size == 0:
                 ax_vel.text(
-                    0.5, 0.5, "⚠ Sin datos validados",
+                    0.5, 0.5, "Sin datos validados",
                     ha="center", va="center",
                     transform=ax_vel.transAxes,
-                    fontsize=14,
-                    color="#e74c3c",
-                    fontweight="600"
+                    fontsize=13,
+                    color=STYLE["invalid"],
+                    fontweight="semibold"
                 )
-                ax_vel.set_title(f"Campo de Velocidades Validado — Frame {idx}",
-                                 fontweight="600", fontsize=12, color="#2c3e50")
-                ax_uv.set_title("Espacio de Velocidades (u-v)", 
-                              fontweight="600", fontsize=12, color="#2c3e50")
-                ax_omega.set_title(f"Campo de Vorticidad — Frame {idx}",
-                                   fontweight="600", fontsize=12, color="#2c3e50")
-                ax_omega_dist.set_title("Distribución de Vorticidad",
-                                        fontweight="600", fontsize=12, color="#2c3e50")
-
-                _force_square_axes(ax_vel, ax_uv, ax_omega, ax_omega_dist)
+                _style_title(ax_vel, f"Campo de velocidades · frame {idx}")
+                _style_title(ax_uv, "Espacio de velocidades (u-v)")
+                _style_title(ax_omega, f"Campo de vorticidad · frame {idx}")
+                _style_title(ax_omega_dist, "Distribución de vorticidad")
+                _force_square_axes(ax_vel, ax_uv, ax_omega)
                 fig.canvas.draw_idle()
                 return
 
-            # ----- FILA 1: VELOCIDADES LINEALES CON STREAMLINES -----
-            # Primero el fondo
-            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.65)
+            speed = np.sqrt(uvals**2 + vvals**2)
+            speed_all = np.sqrt(r.u_mms[valid]**2 + r.v_mms[valid]**2)
 
-            speed = np.sqrt(uvals ** 2 + vvals ** 2)
-            speed_all = np.sqrt(r.u_mms[valid] ** 2 + r.v_mms[valid] ** 2)
-
-            # Normalización por frame para longitud de flecha
             max_speed = np.nanmax(speed_all)
             if max_speed > 1e-6:
                 u_norm = r.u_mms[valid] / max_speed
@@ -650,246 +565,194 @@ class PIVViewer:
                 u_norm = r.u_mms[valid]
                 v_norm = r.v_mms[valid]
 
-            # Colormap mejorado
             vmin = float(np.nanpercentile(speed, 1))
             vmax = float(np.nanpercentile(speed, 99))
             if vmax <= vmin:
                 vmax = vmin + 1e-6
 
             norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-            cmap_vel = plt.get_cmap("turbo")
+            cmap_vel = plt.get_cmap(STYLE["speed_cmap"])
 
-            # STREAMLINES MEJORADAS - Hacerlas más visibles
+            # ---------------------------------------------------
+            # Campo de velocidades + streamlines
+            # ---------------------------------------------------
+            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.72)
+
             try:
-                # Preparar datos para interpolación
-                u_for_stream = r.u_mms.copy()
-                v_for_stream = r.v_mms.copy()
-                
-                # Reemplazar valores no válidos con interpolación de vecinos
-                from scipy.interpolate import griddata
-                
-                # Obtener puntos válidos
                 valid_points = np.column_stack([r.x_mm[valid].ravel(), r.y_mm[valid].ravel()])
                 u_valid_vals = r.u_mms[valid].ravel()
                 v_valid_vals = r.v_mms[valid].ravel()
-                
-                # Crear grid completo
-                x_grid = r.x_mm
-                y_grid = r.y_mm
-                grid_points = np.column_stack([x_grid.ravel(), y_grid.ravel()])
-                
-                # Interpolar para tener campo completo sin NaNs
+
                 if len(valid_points) > 10:
-                    u_interpolated = griddata(valid_points, u_valid_vals, grid_points, 
-                                             method='linear', fill_value=0.0)
-                    v_interpolated = griddata(valid_points, v_valid_vals, grid_points,
-                                             method='linear', fill_value=0.0)
-                    
-                    u_for_stream = u_interpolated.reshape(x_grid.shape)
-                    v_for_stream = v_interpolated.reshape(x_grid.shape)
-                    
-                    # Calcular magnitud para colorear
+                    grid_points = np.column_stack([r.x_mm.ravel(), r.y_mm.ravel()])
+                    u_interp = griddata(valid_points, u_valid_vals, grid_points, method="linear", fill_value=0.0)
+                    v_interp = griddata(valid_points, v_valid_vals, grid_points, method="linear", fill_value=0.0)
+
+                    u_for_stream = u_interp.reshape(r.x_mm.shape)
+                    v_for_stream = v_interp.reshape(r.y_mm.shape)
                     speed_grid = np.sqrt(u_for_stream**2 + v_for_stream**2)
-                    
-                    # Crear streamplot con alta visibilidad
+
                     stream = ax_vel.streamplot(
                         r.x_mm[0, :], r.y_mm[:, 0],
                         u_for_stream, v_for_stream,
                         color=speed_grid,
                         cmap=cmap_vel,
                         norm=norm,
-                        density=1.8,  # Más denso
-                        linewidth=2.0,  # Líneas más gruesas
-                        arrowsize=1.5,  # Flechas más grandes
-                        arrowstyle='->',
-                        alpha=0.85,  # Más opaco
-                        zorder=2  # Por encima del fondo
+                        density=1.35,
+                        linewidth=1.4,
+                        arrowsize=1.0,
+                        alpha=0.85,
+                        zorder=2
                     )
                     artist_mgr.register("stream", stream.lines)
-                    
             except Exception as e:
                 print(f"[PIV] Advertencia streamlines: {e}")
 
-            # Vectores quiver MUY subsampleados para no ocultar streamlines
-            subsample = max(1, r.x_mm[valid].size // 800)  # Menos vectores
+            # Mostrar todos los vectores válidos siempre y hacerlos más grandes
+            quiver_scale = max(scale * 0.12, 1e-6)
 
             q = ax_vel.quiver(
-                r.x_mm[valid][::subsample],
-                r.y_mm[valid][::subsample],
-                u_norm[::subsample],
-                v_norm[::subsample],
-                speed_all[::subsample],
+                r.x_mm[valid],
+                r.y_mm[valid],
+                u_norm,
+                v_norm,
+                speed_all,
                 cmap=cmap_vel,
                 norm=norm,
                 angles="xy",
                 scale_units="xy",
-                scale=scale,
-                width=cfg.quiver_width * 0.8,  # Más delgados
-                alpha=0.4,  # Más transparentes
-                edgecolors='none',
-                zorder=3  # Por encima de streamlines
+                scale=quiver_scale,
+                width=cfg.quiver_width * 0.95,
+                alpha=0.55,
+                edgecolors="none",
+                zorder=3
             )
 
             if "vel" not in cbar_refs:
-                cbar_refs["vel"] = fig.colorbar(
-                    q, ax=ax_vel, label="Velocidad [mm/s]",
-                    fraction=0.046, pad=0.04
-                )
+                cbar_refs["vel"] = fig.colorbar(q, ax=ax_vel, fraction=0.046, pad=0.04)
+                cbar_refs["vel"].set_label("Velocidad [mm/s]")
                 cbar_refs["vel"].ax.tick_params(labelsize=9)
             else:
                 cbar_refs["vel"].update_normal(q)
 
             artist_mgr.register("vel", q)
 
-            ax_vel.set_title(f"Campo de Velocidades + Streamlines — Frame {idx}",
-                             fontweight="600", fontsize=12, color="#2c3e50", pad=12)
-            ax_vel.set_xlabel("x [mm]", fontsize=10, fontweight='500', color='#34495e')
-            ax_vel.set_ylabel("y [mm]", fontsize=10, fontweight='500', color='#34495e')
-            ax_vel.set_aspect("equal", adjustable="box")
-            ax_vel.grid(True, alpha=0.20, linestyle="--", linewidth=0.8, color='#95a5a6', zorder=1)
-            ax_vel.tick_params(labelsize=9, colors='#34495e')
+            _style_title(ax_vel, f"Campo de velocidades · frame {idx}")
+            ax_vel.set_xlabel("x [mm]")
+            ax_vel.set_ylabel("y [mm]")
 
-            # Scatter u-v con gradiente de color
-            scatter = ax_uv.scatter(
+            # ---------------------------------------------------
+            # Espacio u-v
+            # ---------------------------------------------------
+            sc = ax_uv.scatter(
                 uvals, vvals,
                 c=speed,
                 cmap=cmap_vel,
                 norm=norm,
-                s=14,
-                alpha=0.70,
-                edgecolors="#2c3e50",
-                linewidths=0.3
+                s=11,
+                alpha=0.60,
+                edgecolors="none"
             )
-            
-            ax_uv.set_title("Espacio de Velocidades (u-v)", 
-                          fontweight="600", fontsize=12, color="#2c3e50", pad=12)
-            ax_uv.set_xlabel("u [mm/s]", fontsize=10, fontweight='500', color='#34495e')
-            ax_uv.set_ylabel("v [mm/s]", fontsize=10, fontweight='500', color='#34495e')
-            ax_uv.grid(True, alpha=0.25, linestyle="--", linewidth=0.8, color='#95a5a6')
-            ax_uv.axhline(0, color="#7f8c8d", linewidth=1.2, alpha=0.5)
-            ax_uv.axvline(0, color="#7f8c8d", linewidth=1.2, alpha=0.5)
-            ax_uv.tick_params(labelsize=9, colors='#34495e')
+            artist_mgr.register("uv", sc)
+
+            ax_uv.axhline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
+            ax_uv.axvline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
+
+            _style_title(ax_uv, "Espacio de velocidades (u-v)")
+            ax_uv.set_xlabel("u [mm/s]")
+            ax_uv.set_ylabel("v [mm/s]")
 
             umax = np.percentile(np.abs(uvals), 99)
             vmax_ax = np.percentile(np.abs(vvals), 99)
             lim = max(umax, vmax_ax, 1e-6)
-            margin = lim * 0.05
+            margin = lim * 0.06
             ax_uv.set_xlim(-lim - margin, lim + margin)
             ax_uv.set_ylim(-lim - margin, lim + margin)
 
-            # ----- FILA 2: VORTICIDAD -----
+            # ---------------------------------------------------
+            # Vorticidad
+            # ---------------------------------------------------
             if idx not in omega_cache:
-                omega = _compute_vorticity(r.u_mms, r.v_mms, r.x_mm, r.y_mm, valid)
-                omega_cache[idx] = omega
-            else:
-                omega = omega_cache[idx]
+                omega_cache[idx] = _compute_vorticity(r.u_mms, r.v_mms, r.x_mm, r.y_mm, valid)
+            omega = omega_cache[idx]
 
-            ax_omega.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.6)
+            ax_omega.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.65)
 
             omega_valid = omega[valid]
             if omega_valid.size > 0 and np.any(np.isfinite(omega_valid)):
-                omega_finite = np.isfinite(omega)
-                if np.sum(omega_finite) > 10:
-                    max_omega_abs = np.nanmax(np.abs(omega_valid[np.isfinite(omega_valid)]))
+                max_omega_abs = np.nanmax(np.abs(omega_valid[np.isfinite(omega_valid)]))
+                if max_omega_abs > 1e-6:
+                    omega_norm = omega / max_omega_abs
+                else:
+                    omega_norm = omega
 
-                    if max_omega_abs > 1e-6:
-                        omega_norm = omega / max_omega_abs
-                    else:
-                        omega_norm = omega
+                omega_norm_masked = omega_norm.copy()
+                omega_norm_masked[~valid] = np.nan
 
-                    omega_norm_masked = omega_norm.copy()
-                    omega_norm_masked[~valid] = np.nan
+                omega_smooth = gaussian_filter(np.nan_to_num(omega_norm_masked, 0), sigma=1.0)
+                omega_smooth[~valid] = np.nan
 
-                    omega_smooth = gaussian_filter(np.nan_to_num(omega_norm_masked, 0), sigma=1.2)
-                    omega_smooth[~valid] = np.nan
+                levels = np.linspace(-1.0, 1.0, 21)
+                contf = ax_omega.contourf(
+                    r.x_mm, r.y_mm, omega_smooth,
+                    levels=levels,
+                    cmap=STYLE["vorticity_cmap"],
+                    alpha=0.82,
+                    extend="both"
+                )
 
-                    vmin_om = -1.0
-                    vmax_om = 1.0
-                    levels = np.linspace(vmin_om, vmax_om, 25)
+                if "omega" not in cbar_refs:
+                    cbar_refs["omega"] = fig.colorbar(contf, ax=ax_omega, fraction=0.046, pad=0.04)
+                    cbar_refs["omega"].set_label("Vorticidad normalizada")
+                    cbar_refs["omega"].ax.tick_params(labelsize=9)
+                else:
+                    cbar_refs["omega"].update_normal(contf)
 
-                    # Usar colormap divergente mejorado
-                    contf = ax_omega.contourf(
-                        r.x_mm, r.y_mm, omega_smooth,
-                        levels=levels,
-                        cmap="RdBu_r",
-                        alpha=0.80,
-                        extend="both"
-                    )
+                artist_mgr.register("omega", contf)
 
-                    if "omega" not in cbar_refs:
-                        cbar_refs["omega"] = plt.colorbar(
-                            contf, ax=ax_omega,
-                            label="Vorticidad normalizada (ω/ω_max)",
-                            fraction=0.046, pad=0.04
-                        )
-                        cbar_refs["omega"].ax.tick_params(labelsize=9)
-                    else:
-                        cbar_refs["omega"].update_normal(contf)
+            _style_title(ax_omega, f"Campo de vorticidad · frame {idx}")
+            ax_omega.set_xlabel("x [mm]")
+            ax_omega.set_ylabel("y [mm]")
 
-                    artist_mgr.register("omega", contf)
-
-            ax_omega.set_title(f"Campo de Vorticidad — Frame {idx}",
-                               fontweight="600", fontsize=12, color="#2c3e50", pad=12)
-            ax_omega.set_xlabel("x [mm]", fontsize=10, fontweight='500', color='#34495e')
-            ax_omega.set_ylabel("y [mm]", fontsize=10, fontweight='500', color='#34495e')
-            ax_omega.set_aspect("equal", adjustable="box")
-            ax_omega.grid(True, alpha=0.25, linestyle="--", linewidth=0.8, color='#95a5a6')
-            ax_omega.tick_params(labelsize=9, colors='#34495e')
-
-            # Distribución de vorticidad mejorada
+            # ---------------------------------------------------
+            # Histograma de vorticidad
+            # ---------------------------------------------------
             if omega_valid.size > 0:
-                omega_finite_vals = omega_valid[np.isfinite(omega_valid)]
-                if omega_finite_vals.size > 0:
-                    # Histograma con mejor diseño
-                    n, bins, patches = ax_omega_dist.hist(
-                        omega_finite_vals,
-                        bins=45,
-                        color="#3498db",
+                omega_finite = omega_valid[np.isfinite(omega_valid)]
+                if omega_finite.size > 0:
+                    ax_omega_dist.hist(
+                        omega_finite,
+                        bins=40,
+                        color=STYLE["accent"],
                         alpha=0.75,
-                        edgecolor="#2c3e50",
-                        linewidth=1.2
+                        edgecolor="#ffffff",
+                        linewidth=0.6
                     )
-                    
-                    # Colorear barras según valor
-                    cm = plt.get_cmap('RdBu_r')
-                    bin_centers = 0.5 * (bins[:-1] + bins[1:])
-                    col = (bin_centers - bin_centers.min()) / (bin_centers.max() - bin_centers.min())
-                    for c, p in zip(col, patches):
-                        plt.setp(p, 'facecolor', cm(c))
-                    
-                    # Líneas de referencia
                     ax_omega_dist.axvline(
-                        0,
-                        color="#e74c3c",
+                        0.0,
+                        color=STYLE["zero"],
                         linestyle="--",
-                        linewidth=2.5,
-                        alpha=0.85,
+                        linewidth=1.2,
+                        alpha=0.9,
                         label="ω = 0"
                     )
-                    median_val = np.median(omega_finite_vals)
+                    median_val = np.median(omega_finite)
                     ax_omega_dist.axvline(
                         median_val,
-                        color="#f39c12",
-                        linestyle="--",
-                        linewidth=2.5,
+                        color=STYLE["invalid"],
+                        linestyle="-",
+                        linewidth=1.4,
                         alpha=0.85,
                         label=f"Mediana = {median_val:.2f}"
                     )
-                    
-                    ax_omega_dist.legend(fontsize=9, framealpha=0.95, 
-                                       edgecolor='#bdc3c7')
+                    ax_omega_dist.legend(loc="upper right", fontsize=9)
 
-            ax_omega_dist.set_title("Distribución de Vorticidad",
-                                    fontweight="600", fontsize=12, color="#2c3e50", pad=12)
-            ax_omega_dist.set_xlabel("ω [1/s]", fontsize=10, fontweight='500', color='#34495e')
-            ax_omega_dist.set_ylabel("Frecuencia", fontsize=10, fontweight='500', color='#34495e')
-            ax_omega_dist.grid(True, alpha=0.25, axis="y", linestyle="--", 
-                             linewidth=0.8, color='#95a5a6')
-            ax_omega_dist.tick_params(labelsize=9, colors='#34495e')
+            _style_title(ax_omega_dist, "Distribución de vorticidad")
+            ax_omega_dist.set_xlabel("ω [1/s]")
+            ax_omega_dist.set_ylabel("Frecuencia")
+            ax_omega_dist.grid(True, axis="y")
 
-            # Forzar que todos los paneles sean cuadrados
-            _force_square_axes(ax_vel, ax_uv, ax_omega, ax_omega_dist)
-
+            _force_square_axes(ax_vel, ax_uv, ax_omega)
             fig.canvas.draw_idle()
 
         def update(_val=None) -> None:

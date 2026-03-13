@@ -1,3 +1,5 @@
+Cam 1 ant => 1 cm = 80 px
+
 Cam 1 => 1 cm = 80 px
 
 Cam 2 => 1 cm = 78 px

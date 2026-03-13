@@ -9,7 +9,7 @@ import re
 # 1) USER INPUTS
 # ============================================================
 
-RUN_MODE = "ptv"  # "piv" | "ptv" | "both"
+RUN_MODE = "piv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
 CONDA_BAT = r"C:\Users\MBX\anaconda3\condabin\conda.bat"
@@ -59,38 +59,38 @@ FIX_MASKS_DIR = PROJECT_ROOT / "FixMasks"
 # ---------- Perfiles por cámara ----------
 CAM_PROFILES = {
     1: dict(
-        fps=200,
-        dt_ms=1.0,
-        px_per_mm=20.0,
+        fps=220,
+        dt_ms=1000*(1/220),
+        px_per_mm=8,
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
         apply_static_mask=True,
     ),
     2: dict(
-        fps=200,
-        dt_ms=1.0,
-        px_per_mm=20.0,
+        fps=220,
+        dt_ms=1000*(1/220),
+        px_per_mm=7.8,
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
         apply_static_mask=True,
     ),
     3: dict(
-        fps=200,
-        dt_ms=1.0,
-        px_per_mm=20.0,
+        fps=220,
+        dt_ms=1000*(1/220),
+        px_per_mm=7.8,
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
         apply_static_mask=True,
     ),
     4: dict(
-        fps=600,
-        dt_ms=1.0,
-        px_per_mm=20.0,
-        width_px=1024,
-        height_px=1024,
+        fps=660,
+        dt_ms=1000*(1/660),
+        px_per_mm=10.7,
+        width_px=380,
+        height_px=380,
         apply_dynamic_mask=True,
         apply_static_mask=True,
     ),
@@ -255,7 +255,7 @@ CAM_PREPROCESS_PARAMS_PTV = {
 }
 
 # --- Preprocess: muestreo por bloques ---
-BLOCKS      = None
+BLOCKS      = 50
 BLOCK_SIZE  = 22
 SKIP_INTER  = 0
 SKIP_FINAL  = 20
