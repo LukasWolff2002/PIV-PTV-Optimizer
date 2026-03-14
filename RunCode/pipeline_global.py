@@ -178,7 +178,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=11,
             skip_inter=0,
             skip_final=9,
-            fps=200.0
+            fps=220.0
         ),
         TemporalRegion(
             name="media_velocidad",
@@ -187,7 +187,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=11,
             skip_inter=1,
             skip_final=8,
-            fps=200.0
+            fps=220.0
         ),
         TemporalRegion(
             name="baja_velocidad",
@@ -196,7 +196,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=22,
             skip_inter=2,
             skip_final=18,
-            fps=200.0
+            fps=220.0
         ),
     ],
 
@@ -208,7 +208,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=11,
             skip_inter=0,
             skip_final=9,
-            fps=200.0
+            fps=220.0
         ),
         TemporalRegion(
             name="media_velocidad",
@@ -217,7 +217,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=11,
             skip_inter=1,
             skip_final=8,
-            fps=200.0
+            fps=220.0
         ),
         TemporalRegion(
             name="baja_velocidad",
@@ -226,7 +226,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=22,
             skip_inter=2,
             skip_final=18,
-            fps=200.0
+            fps=220.0
         ),
     ],
 
@@ -238,7 +238,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=11,
             skip_inter=0,
             skip_final=9,
-            fps=200.0
+            fps=220.0
         ),
         TemporalRegion(
             name="media_velocidad",
@@ -247,7 +247,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=11,
             skip_inter=1,
             skip_final=8,
-            fps=200.0
+            fps=220.0
         ),
         TemporalRegion(
             name="baja_velocidad",
@@ -256,7 +256,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=22,
             skip_inter=2,
             skip_final=18,
-            fps=200.0
+            fps=220.0
         ),
     ],
 
@@ -268,7 +268,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=33,
             skip_inter=0,
             skip_final=31,
-            fps=600.0
+            fps=660.0
         ),
         TemporalRegion(
             name="media_velocidad",
@@ -277,7 +277,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=33,
             skip_inter=1,
             skip_final=30,
-            fps=600.0
+            fps=660.0
         ),
         TemporalRegion(
             name="baja_velocidad",
@@ -286,7 +286,7 @@ CAM_TEMPORAL_REGIONS = {
             block_size=66,
             skip_inter=2,
             skip_final=62,
-            fps=600.0
+            fps=660.0
         ),
     ],
 }
