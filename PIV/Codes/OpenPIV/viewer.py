@@ -374,7 +374,7 @@ class PIVViewer:
                     angles="xy",
                     scale_units="xy",
                     scale=quiver_scale,
-                    width=cfg.quiver_width * 1.15,
+                    width=cfg.quiver_width * 5,
                     alpha=0.90
                 )
 
@@ -409,7 +409,7 @@ class PIVViewer:
                     angles="xy",
                     scale_units="xy",
                     scale=quiver_scale,
-                    width=cfg.quiver_width * 1.15,
+                    width=cfg.quiver_width * 5,
                     alpha=0.75
                 )
                 artist_mgr.register("vel", q)

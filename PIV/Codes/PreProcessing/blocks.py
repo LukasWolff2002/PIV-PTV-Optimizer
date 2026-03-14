@@ -11,7 +11,9 @@ from typing import List, Optional, Dict
 
 # Importar funciones de preprocesamiento
 try:
-    from .filters import preprocess_image_file
+    import numpy as np
+    from PIL import Image
+    from .filters import load_image, apply_preprocessing, save_image
     PREPROCESS_AVAILABLE = True
 except ImportError:
     PREPROCESS_AVAILABLE = False
@@ -37,6 +39,22 @@ def list_sorted_files(folder: Path, natural_sort: bool) -> List[Path]:
     files = [p for p in folder.iterdir() if p.is_file()]
     files.sort(key=(lambda p: natural_key(p.name)) if natural_sort else (lambda p: p.name))
     return files
+
+def obtener_bit_depth_original(filepath: Path) -> int:
+    """
+    Determina la profundidad de bits original de la imagen.
+
+    Retorna:
+        8  -> si la imagen original es uint8
+        16 -> si la imagen original es uint16
+    """
+    with Image.open(filepath) as img:
+        img_array = np.array(img)
+
+    if img_array.dtype == np.uint16:
+        return 16
+
+    return 8
 
 
 def run_block_sampling(
@@ -133,7 +151,7 @@ def run_block_sampling(
 
         for idx in (idx1, idx2):
             src = files[idx]
-            dst = output_dir / src.name
+            dst = output_dir / f"{src.stem}.png"
             
             # Saltar si existe y no se permite sobrescribir
             if dst.exists() and not overwrite:
@@ -141,21 +159,31 @@ def run_block_sampling(
             
             # PREPROCESAMIENTO O COPIA DIRECTA
             if apply_preprocess:
-                # Cargar → Procesar → Guardar
                 try:
-                    preprocess_image_file(
-                        input_path=src,
-                        output_path=dst,
-                        params=preprocess_params,
-                        bit_depth=16
-                    )
+                    # 1) Detectar bit depth original
+                    bit_depth_original = obtener_bit_depth_original(src)
+
+                    # 2) Cargar imagen original normalizada a [0,1]
+                    img = load_image(src)
+
+                    # 3) Aplicar preprocesamiento
+                    img_procesada = apply_preprocessing(img, preprocess_params)
+
+                    # 4) Guardar como PNG manteniendo bit depth original
+                    save_image(img_procesada, dst, bit_depth=bit_depth_original)
+
                 except Exception as e:
                     print(f"[ERROR] Fallo preprocesamiento en {src.name}: {e}")
-                    print(f"[WARN] Copiando original sin procesar")
-                    shutil.copy2(src, dst)
+
             else:
-                # Copia directa sin modificar (comportamiento original)
-                shutil.copy2(src, dst)
+                try:
+                    # Si no hay preprocesamiento, igual convertir a PNG
+                    bit_depth_original = obtener_bit_depth_original(src)
+                    img = load_image(src)
+                    save_image(img, dst, bit_depth=bit_depth_original)
+
+                except Exception as e:
+                    print(f"[ERROR] Fallo conversión en {src.name}: {e}")
 
         # Avanzar al siguiente bloque
         i += block_size

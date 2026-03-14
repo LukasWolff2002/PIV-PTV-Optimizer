@@ -15,7 +15,7 @@ from .workers import compute_pair_worker, validate_pair_worker
 
 
 def _list_images(images_dir: Path) -> List[Path]:
-    imgs = sorted(images_dir.glob("*.tif*"))
+    imgs = sorted(images_dir.glob("*.png*"))
     return imgs
 
 

@@ -83,7 +83,7 @@ CAM_PROFILES = {
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
-        apply_static_mask=True,
+        apply_static_mask=False,
     ),
     4: dict(
         fps=660,
@@ -255,14 +255,14 @@ CAM_PREPROCESS_PARAMS_PTV = {
 }
 
 # --- Preprocess: muestreo por bloques ---
-BLOCKS      = 50
-BLOCK_SIZE  = 22
+BLOCKS      = 200
+BLOCK_SIZE  = 50
 SKIP_INTER  = 0
-SKIP_FINAL  = 20
+SKIP_FINAL  = 48
 DELETE_EXISTING_PRE = True
 
 # --- Modelo YOLO máscaras (para PIV) ---
-MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "DynamicMask.pt"
+MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "cam3-piv.pt"
 MASK_CONF = 0.25
 MASK_DEVICE = "0"
 INVERT_MASK = True
