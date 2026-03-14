@@ -19,6 +19,7 @@ class PIVConfig:
     # Timing
     # =========================
     dt_ms: float
+    fps: float
 
     # =========================
     # Calibration

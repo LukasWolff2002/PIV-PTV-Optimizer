@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 
-
 @dataclass(frozen=True)
 class PairJob:
     pair_id: int
@@ -13,7 +12,7 @@ class PairJob:
     mask_a: Path
     mask_b: Path
     name: str
-
+    dt_ms: float  # ← AGREGADO: dt específico para este par
 
 @dataclass(frozen=True)
 class PIVResult:
@@ -26,7 +25,7 @@ class PIVResult:
     bg_display: np.ndarray
     img_a: Path
     img_b: Path
-
+    dt_ms: float  # ← AGREGADO: para trazabilidad
 
 @dataclass(frozen=True)
 class PIVResultFinal(PIVResult):

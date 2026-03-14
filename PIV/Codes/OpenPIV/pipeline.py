@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple, Dict
 import os
+import json
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from tqdm import tqdm
@@ -15,7 +16,10 @@ from .workers import compute_pair_worker, validate_pair_worker
 
 
 def _list_images(images_dir: Path) -> List[Path]:
-    imgs = sorted(images_dir.glob("*.png*"))
+    imgs = sorted(images_dir.glob("*.tiff*"))
+    if not imgs:
+        # Intentar con PNG si no hay TIFF
+        imgs = sorted(images_dir.glob("*.png"))
     return imgs
 
 
@@ -56,6 +60,43 @@ def _mask_for_image(mask_map: Dict[str, Path], img_path: Path) -> Path:
     return mask_map[key]
 
 
+def _load_block_metadata(images_dir: Path) -> Dict[Tuple[str, str], float]:
+    """
+    Cargar block_metadata.json y crear diccionario de búsqueda rápida
+    
+    Returns:
+        Dict con key=(img1_filename, img2_filename) -> dt_ms
+    """
+    metadata_path = images_dir / "block_metadata.json"
+    
+    if not metadata_path.exists():
+        print(f"[WARN] No se encontró block_metadata.json en {images_dir}")
+        print(f"[WARN] Se usará dt_ms fijo del config para todos los pares")
+        return {}
+    
+    try:
+        with open(metadata_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        pair_dt_map = {}
+        for pair in data.get("pairs", []):
+            img1_name = pair.get("img1_filename")
+            img2_name = pair.get("img2_filename")
+            dt_ms = pair.get("dt_ms")
+            
+            if img1_name and img2_name and dt_ms is not None:
+                key = (img1_name, img2_name)
+                pair_dt_map[key] = float(dt_ms)
+        
+        print(f"[METADATA] Cargados {len(pair_dt_map)} pares con dt_ms específico")
+        return pair_dt_map
+        
+    except Exception as e:
+        print(f"[ERROR] Fallo al cargar block_metadata.json: {e}")
+        print(f"[WARN] Se usará dt_ms fijo del config")
+        return {}
+
+
 class PIVPipeline:
     def __init__(self, cfg: PIVConfig) -> None:
         self.cfg = cfg
@@ -82,6 +123,11 @@ class PIVPipeline:
             if not mask_map:
                 raise RuntimeError(f"No encontré máscaras '*_mask.tif*' en {cfg.masks_dir}")
 
+        # ================================================================
+        # NUEVO: Cargar metadata con dt_ms por par
+        # ================================================================
+        pair_dt_map = _load_block_metadata(cfg.images_dir)
+        
         jobs: List[PairJob] = []
         for pair_id, ia, ib in pair_indices(len(images)):
             img_a = images[ia]
@@ -95,7 +141,19 @@ class PIVPipeline:
                 m_b = Path("")
 
             name = f"{img_a.name} - {img_b.name}"
-            jobs.append(PairJob(pair_id, img_a, img_b, m_a, m_b, name))
+            
+            # ================================================================
+            # NUEVO: Buscar dt_ms específico para este par
+            # ================================================================
+            key = (img_a.name, img_b.name)
+            dt_ms = pair_dt_map.get(key, cfg.dt_ms)  # Fallback a config si no existe
+            
+            if key in pair_dt_map:
+                print(f"[PAIR {pair_id}] {img_a.name} + {img_b.name} → dt={dt_ms:.3f} ms")
+            else:
+                print(f"[PAIR {pair_id}] {img_a.name} + {img_b.name} → dt={dt_ms:.3f} ms (default)")
+            
+            jobs.append(PairJob(pair_id, img_a, img_b, m_a, m_b, name, dt_ms))
 
         if not jobs:
             raise RuntimeError("No hay pares A-B (necesitas al menos 2 imágenes).")
@@ -123,7 +181,7 @@ class PIVPipeline:
                         str(job.img_b),
                         str(job.mask_a) if use_masks else "",
                         str(job.mask_b) if use_masks else "",
-                        cfg.dt_s(),
+                        job.dt_ms / 1000.0,  # ← CAMBIADO: usar dt_ms del job (convertir a segundos)
                         cfg.window_sizes,
                         cfg.overlaps,
                         cfg.search_area_factor,
@@ -133,8 +191,8 @@ class PIVPipeline:
                         use_masks,
                         False,   # apply_static_mask (no usado en este modo)
                         "",      # fixed_mask_path
-                        cfg.replace_outliers_kernel,   # MEJORA #5
-                        cfg.replace_outliers_max_iter, # MEJORA #5
+                        cfg.replace_outliers_kernel,
+                        cfg.replace_outliers_max_iter,
                     )
                 )
 
@@ -147,6 +205,12 @@ class PIVPipeline:
                 dynamic_ncols=True,
             ):
                 pair_id, x_mm, y_mm, u_mms, v_mms, in_mask, bg_disp, a, b = fut.result()
+                
+                # ================================================================
+                # NUEVO: Recuperar dt_ms del job correspondiente
+                # ================================================================
+                job_dt_ms = next(j.dt_ms for j in jobs if j.pair_id == pair_id)
+                
                 results.append(
                     PIVResult(
                         pair_id=pair_id,
@@ -158,6 +222,7 @@ class PIVPipeline:
                         bg_display=bg_disp,
                         img_a=Path(a),
                         img_b=Path(b),
+                        dt_ms=job_dt_ms,  # ← NUEVO: guardar dt_ms usado
                     )
                 )
 
@@ -189,8 +254,8 @@ class PIVPipeline:
                         cfg.lm_kernel,
                         cfg.lm_thresh,
                         cfg.lm_eps,
-                        cfg.replace_outliers_kernel,   # MEJORA #5
-                        cfg.replace_outliers_max_iter, # MEJORA #5
+                        cfg.replace_outliers_kernel,
+                        cfg.replace_outliers_max_iter,
                     )
                 )
 
@@ -203,6 +268,12 @@ class PIVPipeline:
                 dynamic_ncols=True,
             ):
                 pair_id, x_mm, y_mm, u3, v3, in_mask, bg, a, b = fut.result()
+                
+                # ================================================================
+                # NUEVO: Recuperar dt_ms del resultado original
+                # ================================================================
+                orig_dt_ms = next(r.dt_ms for r in results if r.pair_id == pair_id)
+                
                 finals.append(
                     PIVResultFinal(
                         pair_id=pair_id,
@@ -214,6 +285,7 @@ class PIVPipeline:
                         bg_display=bg,
                         img_a=Path(a),
                         img_b=Path(b),
+                        dt_ms=orig_dt_ms,  # ← NUEVO: preservar dt_ms
                     )
                 )
 

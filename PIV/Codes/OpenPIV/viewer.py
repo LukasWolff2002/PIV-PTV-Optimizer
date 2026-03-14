@@ -12,6 +12,7 @@ from scipy.interpolate import griddata
 from .models import PIVResult, PIVResultFinal
 from .config import PIVConfig
 from .validation import velocity_region_mask
+from .timestamp_utils import load_timestamps_from_metadata, get_timestamp_for_result
 
 
 # ===============================================================
@@ -34,6 +35,8 @@ STYLE = {
     "zero": "#475569",
     "vorticity_cmap": "RdBu_r",
     "speed_cmap": "viridis",
+    "info_bg": "#eff6ff",
+    "info_border": "#93c5fd",
 }
 
 
@@ -81,6 +84,63 @@ def _style_title(ax, title: str) -> None:
 def _force_square_axes(*axes) -> None:
     for ax in axes:
         ax.set_box_aspect(1)
+
+
+# ===============================================================
+# Extracción de metadata de nombres de archivo
+# ===============================================================
+
+def _extract_metadata_from_filename(filename: str) -> Optional[Dict[str, Any]]:
+    """
+    Extrae región, bloque, timestamp y dt desde nombres como:
+    'img_0000_r1b001s0.png' o 'pair_r1b001_t0.000s_dt4.545ms.txt'
+    
+    Returns:
+        Dict con region_idx, block_idx, timestamp_s, dt_ms o None
+    """
+    import re
+    
+    # Patrón 1: img_XXXX_rRbBBBsS.ext
+    pattern1 = r'_r(\d+)b(\d+)s(\d+)'
+    match1 = re.search(pattern1, filename)
+    
+    if match1:
+        region_idx = int(match1.group(1)) - 1  # r1 -> índice 0
+        block_idx = int(match1.group(2)) - 1   # b001 -> índice 0
+        skip_inter = int(match1.group(3))
+        return {
+            'region_idx': region_idx,
+            'block_idx': block_idx,
+            'skip_inter': skip_inter,
+        }
+    
+    # Patrón 2: pair_rRbBBB_tT.TTTs_dtD.DDDms.ext
+    pattern2 = r'pair_r(\d+)b(\d+)_t([\d.]+)s_dt([\d.]+)ms'
+    match2 = re.search(pattern2, filename)
+    
+    if match2:
+        region_idx = int(match2.group(1)) - 1
+        block_idx = int(match2.group(2)) - 1
+        timestamp_s = float(match2.group(3))
+        dt_ms = float(match2.group(4))
+        return {
+            'region_idx': region_idx,
+            'block_idx': block_idx,
+            'timestamp_s': timestamp_s,
+            'dt_ms': dt_ms,
+        }
+    
+    return None
+
+
+def _get_region_name(region_idx: int) -> str:
+    """Mapear índice de región a nombre"""
+    region_names = {
+        0: "Alta Velocidad",
+        1: "Media Velocidad",
+        2: "Baja Velocidad",
+    }
+    return region_names.get(region_idx, f"Región {region_idx + 1}")
 
 
 # ===============================================================
@@ -148,16 +208,17 @@ def _precompute_hulls(
 
 
 # ===============================================================
-# Panel lateral unificado
+# Panel lateral mejorado con info temporal
 # ===============================================================
 
-def _create_right_panel(
+def _create_right_panel_enhanced(
     fig: plt.Figure,
     panel_spec,
     n_frames: int,
     frame_init: int = 0,
     scale_init: float = 1.0,
-) -> Tuple[Any, Slider, Slider, Button]:
+) -> Tuple[Any, Any, Slider, Slider, Button]:
+    """Panel lateral con área de información temporal dinámica"""
     ax_panel = fig.add_subplot(panel_spec)
     ax_panel.set_facecolor(STYLE["panel_bg"])
     ax_panel.set_xticks([])
@@ -169,7 +230,8 @@ def _create_right_panel(
     pos = ax_panel.get_position()
     x0, y0, w, h = pos.x0, pos.y0, pos.width, pos.height
 
-    ax_title = fig.add_axes([x0 + 0.08 * w, y0 + 0.90 * h, 0.84 * w, 0.06 * h], facecolor=STYLE["panel_bg"])
+    # Título
+    ax_title = fig.add_axes([x0 + 0.08 * w, y0 + 0.90 * h, 0.84 * w, 0.05 * h], facecolor=STYLE["panel_bg"])
     ax_title.axis("off")
     ax_title.text(
         0.0, 0.5, "Controles",
@@ -177,10 +239,11 @@ def _create_right_panel(
         fontsize=11, fontweight="semibold", color=STYLE["text"]
     )
 
-    ax_momento = fig.add_axes([x0 + 0.12 * w, y0 + 0.78 * h, 0.76 * w, 0.035 * h], facecolor=STYLE["panel_bg"])
+    # Slider de momento/frame
+    ax_momento = fig.add_axes([x0 + 0.12 * w, y0 + 0.82 * h, 0.76 * w, 0.028 * h], facecolor=STYLE["panel_bg"])
     s_momento = Slider(
         ax=ax_momento,
-        label="Frame",
+        label="Par",
         valmin=0,
         valmax=max(0, n_frames - 1),
         valinit=frame_init,
@@ -191,7 +254,8 @@ def _create_right_panel(
     s_momento.label.set_fontsize(9)
     s_momento.valtext.set_fontsize(9)
 
-    ax_scale = fig.add_axes([x0 + 0.12 * w, y0 + 0.68 * h, 0.76 * w, 0.035 * h], facecolor=STYLE["panel_bg"])
+    # Slider de escala
+    ax_scale = fig.add_axes([x0 + 0.12 * w, y0 + 0.74 * h, 0.76 * w, 0.028 * h], facecolor=STYLE["panel_bg"])
     s_scale = Slider(
         ax=ax_scale,
         label="Escala",
@@ -205,7 +269,8 @@ def _create_right_panel(
     s_scale.label.set_fontsize(9)
     s_scale.valtext.set_fontsize(9)
 
-    ax_reset = fig.add_axes([x0 + 0.22 * w, y0 + 0.58 * h, 0.56 * w, 0.05 * h], facecolor=STYLE["panel_bg"])
+    # Botón reset
+    ax_reset = fig.add_axes([x0 + 0.22 * w, y0 + 0.66 * h, 0.56 * w, 0.045 * h], facecolor=STYLE["panel_bg"])
     btn_reset = Button(
         ax=ax_reset,
         label="Reset",
@@ -215,7 +280,28 @@ def _create_right_panel(
     btn_reset.label.set_fontsize(9)
     btn_reset.label.set_color(STYLE["text"])
 
-    ax_info = fig.add_axes([x0 + 0.08 * w, y0 + 0.12 * h, 0.84 * w, 0.34 * h], facecolor=STYLE["panel_bg"])
+    # ================================================================
+    # NUEVO: Área de información temporal dinámica
+    # ================================================================
+    ax_temporal_info = fig.add_axes(
+        [x0 + 0.08 * w, y0 + 0.44 * h, 0.84 * w, 0.18 * h],
+        facecolor=STYLE["panel_bg"]
+    )
+    ax_temporal_info.axis("off")
+
+    # Card de fondo
+    card_temporal = FancyBboxPatch(
+        (0, 0), 1, 1,
+        boxstyle="round,pad=0.015,rounding_size=0.025",
+        transform=ax_temporal_info.transAxes,
+        facecolor=STYLE["info_bg"],
+        edgecolor=STYLE["info_border"],
+        linewidth=1.2
+    )
+    ax_temporal_info.add_patch(card_temporal)
+
+    # Área de uso/ayuda (más pequeña)
+    ax_info = fig.add_axes([x0 + 0.08 * w, y0 + 0.10 * h, 0.84 * w, 0.28 * h], facecolor=STYLE["panel_bg"])
     ax_info.axis("off")
 
     card = FancyBboxPatch(
@@ -229,25 +315,125 @@ def _create_right_panel(
     ax_info.add_patch(card)
 
     ax_info.text(
-        0.06, 0.88, "Uso",
+        0.06, 0.88, "Navegación",
         ha="left", va="center",
         fontsize=10, fontweight="semibold", color=STYLE["text"],
         transform=ax_info.transAxes
     )
 
     info_text = (
-        "• Frame: recorre los resultados en el tiempo\n\n"
-        "• Escala: ajusta la longitud de los vectores\n\n"
-        "• Reset: vuelve a los valores iniciales"
+        "• Par: navega entre resultados\n\n"
+        "• Escala: ajusta longitud de vectores\n\n"
+        "• Reset: valores iniciales\n\n"
+        "• Teclado: ← → para navegar"
     )
     ax_info.text(
-        0.06, 0.76, info_text,
+        0.06, 0.72, info_text,
         ha="left", va="top",
-        fontsize=8.8, color=STYLE["muted"],
+        fontsize=8.5, color=STYLE["muted"],
         transform=ax_info.transAxes, linespacing=1.5
     )
 
-    return ax_panel, s_momento, s_scale, btn_reset
+    return ax_panel, ax_temporal_info, s_momento, s_scale, btn_reset
+
+
+def _update_temporal_info(
+    ax_temporal_info,
+    idx: int,
+    n_frames: int,
+    dt_ms: float,
+    names: List[str],
+    valid_count: int,
+    total_count: int,
+    max_speed: float,
+    timestamp_s: Optional[float] = None,  # ← NUEVO: recibir timestamp directamente
+) -> None:
+    """Actualiza el panel de información temporal"""
+    ax_temporal_info.clear()
+    ax_temporal_info.axis("off")
+    
+    # Extraer metadata del nombre si es posible
+    name = names[idx] if idx < len(names) else ""
+    metadata = _extract_metadata_from_filename(name)
+    
+    # Usar timestamp pasado como parámetro o estimación básica
+    if timestamp_s is None:
+        # Estimación básica (fallback)
+        timestamp_s = idx * (dt_ms / 1000.0)
+    
+    # Información de región
+    if metadata and 'region_idx' in metadata:
+        region_name = _get_region_name(metadata['region_idx'])
+        region_info = f"{region_name}"
+        if 'skip_inter' in metadata:
+            region_info += f" (skip={metadata['skip_inter']})"
+    else:
+        region_info = "—"
+    
+    # Card de fondo
+    card = FancyBboxPatch(
+        (0, 0), 1, 1,
+        boxstyle="round,pad=0.015,rounding_size=0.025",
+        transform=ax_temporal_info.transAxes,
+        facecolor=STYLE["info_bg"],
+        edgecolor=STYLE["info_border"],
+        linewidth=1.2
+    )
+    ax_temporal_info.add_patch(card)
+    
+    # Título
+    ax_temporal_info.text(
+        0.06, 0.82, "Información Temporal",
+        ha="left", va="center",
+        fontsize=9.5, fontweight="semibold", color=STYLE["text"],
+        transform=ax_temporal_info.transAxes
+    )
+    
+    # Línea de separación
+    ax_temporal_info.plot(
+        [0.06, 0.94], [0.72, 0.72],
+        transform=ax_temporal_info.transAxes,
+        color=STYLE["info_border"], linewidth=1.0, alpha=0.5
+    )
+    
+    # Información principal
+    info_lines = [
+        f"Par:  {idx + 1} / {n_frames}",
+        f"t =  {timestamp_s:.3f} s",
+        f"Δt = {dt_ms:.3f} ms",
+        f"",
+        f"Región:  {region_info}",
+        f"Vectores:  {valid_count:,} / {total_count:,}",
+        f"V_max:  {max_speed:.1f} mm/s",
+    ]
+    
+    y_start = 0.62
+    y_step = 0.10
+    
+    for i, line in enumerate(info_lines):
+        if line == "":
+            continue
+        
+        # Colorear diferente las primeras 3 líneas (datos temporales)
+        if i < 3:
+            color = STYLE["accent"]
+            weight = "semibold"
+            size = 9.0
+        else:
+            color = STYLE["text"]
+            weight = "normal"
+            size = 8.5
+        
+        ax_temporal_info.text(
+            0.06, y_start - i * y_step,
+            line,
+            ha="left", va="center",
+            fontsize=size,
+            fontweight=weight,
+            color=color,
+            transform=ax_temporal_info.transAxes,
+            family="monospace"
+        )
 
 
 # ===============================================================
@@ -289,14 +475,20 @@ class ArtistManager:
 class PIVViewer:
 
     def show_initial(self, results: List[PIVResult], names: List[str], cfg: PIVConfig) -> None:
-        """Vista inicial con estética uniforme."""
+        """Vista inicial con información temporal mejorada."""
         _setup_matplotlib_style()
         print("[PIV] Precalculando velocity regions para viewer...", flush=True)
         precomputed = _precompute_hulls(results, cfg.keep_percentile)
+        
+        # ================================================================
+        # NUEVO: Cargar timestamps desde metadata
+        # ================================================================
+        timestamps = load_timestamps_from_metadata(cfg.images_dir)
+        print(f"[PIV] Cargados {len(timestamps)} timestamps desde metadata", flush=True)
 
-        fig = plt.figure(figsize=(16.8, 7.0), facecolor=STYLE["figure_bg"])
+        fig = plt.figure(figsize=(17.5, 7.5), facecolor=STYLE["figure_bg"])
         fig.suptitle(
-            "Análisis PIV · Vista inicial",
+            "Análisis PIV · Vista Inicial",
             fontsize=14,
             fontweight="semibold",
             color=STYLE["text"],
@@ -305,7 +497,7 @@ class PIVViewer:
 
         gs = fig.add_gridspec(
             1, 3,
-            width_ratios=[1.0, 1.0, 0.38],
+            width_ratios=[1.0, 1.0, 0.40],
             wspace=0.28,
             left=0.05, right=0.98, top=0.92, bottom=0.08
         )
@@ -313,7 +505,7 @@ class PIVViewer:
         ax_vel = fig.add_subplot(gs[0, 0])
         ax_uv = fig.add_subplot(gs[0, 1])
 
-        _, s_momento, s_scale, btn_reset = _create_right_panel(
+        _, ax_temporal_info, s_momento, s_scale, btn_reset = _create_right_panel_enhanced(
             fig=fig,
             panel_spec=gs[0, 2],
             n_frames=len(results),
@@ -341,6 +533,27 @@ class PIVViewer:
 
             uvals = r.u_mms[valid]
             vvals = r.v_mms[valid]
+            
+            # Estadísticas para panel info
+            total_points = valid.size
+            valid_count = np.sum(inside) if inside is not None else uvals.size
+            max_speed = float(np.nanmax(np.sqrt(r.u_mms**2 + r.v_mms**2))) if valid.any() else 0.0
+            
+            # Obtener timestamp correcto desde metadata
+            timestamp_s = get_timestamp_for_result(r, timestamps)
+
+            # Actualizar panel de información temporal
+            _update_temporal_info(
+                ax_temporal_info,
+                idx=idx,
+                n_frames=len(results),
+                dt_ms=r.dt_ms,
+                names=names,
+                valid_count=valid_count,
+                total_count=total_points,
+                max_speed=max_speed,
+                timestamp_s=timestamp_s,  # ← NUEVO
+            )
 
             # ---------------------------------------------------
             # Campo espacial
@@ -355,16 +568,15 @@ class PIVViewer:
                 bad = valid & (~inside_grid)
 
                 speed_all = np.sqrt(r.u_mms**2 + r.v_mms**2)
-                max_speed = np.nanmax(speed_all)
+                max_speed_norm = np.nanmax(speed_all)
 
-                if max_speed > 1e-6:
-                    u_norm = r.u_mms / max_speed
-                    v_norm = r.v_mms / max_speed
+                if max_speed_norm > 1e-6:
+                    u_norm = r.u_mms / max_speed_norm
+                    v_norm = r.v_mms / max_speed_norm
                 else:
                     u_norm = r.u_mms
                     v_norm = r.v_mms
 
-                # Mostrar todos los vectores y aumentar claramente su longitud visual
                 quiver_scale = max(scale * 0.12, 1e-6)
 
                 q1 = ax_vel.quiver(
@@ -414,7 +626,7 @@ class PIVViewer:
                 )
                 artist_mgr.register("vel", q)
 
-            _style_title(ax_vel, f"Campo de velocidades · frame {idx}")
+            _style_title(ax_vel, f"Campo de velocidades · t = {r.dt_ms * idx / 1000:.3f}s")
             ax_vel.set_xlabel("x [mm]")
             ax_vel.set_ylabel("y [mm]")
 
@@ -448,7 +660,7 @@ class PIVViewer:
             ax_uv.axhline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
             ax_uv.axvline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
 
-            _style_title(ax_uv, "Espacio de velocidades (u-v)")
+            _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f}ms")
             ax_uv.set_xlabel("u [mm/s]")
             ax_uv.set_ylabel("v [mm/s]")
 
@@ -470,20 +682,36 @@ class PIVViewer:
             s_momento.reset()
             s_scale.reset()
 
+        def on_key(event):
+            """Navegación con teclado"""
+            if event.key == 'right':
+                new_val = min(s_momento.val + 1, s_momento.valmax)
+                s_momento.set_val(new_val)
+            elif event.key == 'left':
+                new_val = max(s_momento.val - 1, s_momento.valmin)
+                s_momento.set_val(new_val)
+
         s_momento.on_changed(update)
         s_scale.on_changed(update)
         btn_reset.on_clicked(reset)
+        fig.canvas.mpl_connect('key_press_event', on_key)
 
         update()
         plt.show()
 
     def show_final(self, finals: List[PIVResultFinal], names: List[str], cfg: PIVConfig) -> None:
-        """Vista final con estilo unificado."""
+        """Vista final con información temporal mejorada."""
         _setup_matplotlib_style()
+        
+        # ================================================================
+        # NUEVO: Cargar timestamps desde metadata
+        # ================================================================
+        timestamps = load_timestamps_from_metadata(cfg.images_dir)
+        print(f"[PIV] Cargados {len(timestamps)} timestamps desde metadata", flush=True)
 
-        fig = plt.figure(figsize=(18.5, 10.2), facecolor=STYLE["figure_bg"])
+        fig = plt.figure(figsize=(19.0, 10.5), facecolor=STYLE["figure_bg"])
         fig.suptitle(
-            "Análisis PIV · Resultados finales",
+            "Análisis PIV · Resultados Finales",
             fontsize=15,
             fontweight="semibold",
             color=STYLE["text"],
@@ -492,7 +720,7 @@ class PIVViewer:
 
         gs = fig.add_gridspec(
             2, 3,
-            width_ratios=[1.0, 1.0, 0.38],
+            width_ratios=[1.0, 1.0, 0.40],
             height_ratios=[1.0, 1.0],
             hspace=0.28,
             wspace=0.28,
@@ -504,7 +732,7 @@ class PIVViewer:
         ax_omega = fig.add_subplot(gs[1, 0])
         ax_omega_dist = fig.add_subplot(gs[1, 1])
 
-        _, s_momento, s_scale, btn_reset = _create_right_panel(
+        _, ax_temporal_info, s_momento, s_scale, btn_reset = _create_right_panel_enhanced(
             fig=fig,
             panel_spec=gs[:, 2],
             n_frames=len(finals),
@@ -536,19 +764,41 @@ class PIVViewer:
             valid = np.isfinite(r.u_mms) & np.isfinite(r.v_mms) & (~r.in_mask)
             uvals = r.u_mms[valid]
             vvals = r.v_mms[valid]
+            
+            # Estadísticas
+            total_points = valid.size
+            valid_count = np.sum(valid)
+            max_speed = float(np.nanmax(np.sqrt(r.u_mms[valid]**2 + r.v_mms[valid]**2))) if valid.any() else 0.0
+            
+            # Obtener timestamp correcto desde metadata
+            timestamp_s = get_timestamp_for_result(r, timestamps)
+            
+            # Actualizar panel temporal
+            _update_temporal_info(
+                ax_temporal_info,
+                idx=idx,
+                n_frames=len(finals),
+                dt_ms=r.dt_ms,
+                names=names,
+                valid_count=valid_count,
+                total_count=total_points,
+                max_speed=max_speed,
+                timestamp_s=timestamp_s,  # ← NUEVO
+            )
 
             if uvals.size == 0:
-                ax_vel.text(
-                    0.5, 0.5, "Sin datos validados",
-                    ha="center", va="center",
-                    transform=ax_vel.transAxes,
-                    fontsize=13,
-                    color=STYLE["invalid"],
-                    fontweight="semibold"
-                )
-                _style_title(ax_vel, f"Campo de velocidades · frame {idx}")
-                _style_title(ax_uv, "Espacio de velocidades (u-v)")
-                _style_title(ax_omega, f"Campo de vorticidad · frame {idx}")
+                for ax in [ax_vel, ax_omega]:
+                    ax.text(
+                        0.5, 0.5, "Sin datos validados",
+                        ha="center", va="center",
+                        transform=ax.transAxes,
+                        fontsize=13,
+                        color=STYLE["invalid"],
+                        fontweight="semibold"
+                    )
+                _style_title(ax_vel, f"Campo de velocidades · t = {r.dt_ms * idx / 1000:.3f}s")
+                _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f}ms")
+                _style_title(ax_omega, f"Campo de vorticidad · t = {r.dt_ms * idx / 1000:.3f}s")
                 _style_title(ax_omega_dist, "Distribución de vorticidad")
                 _force_square_axes(ax_vel, ax_uv, ax_omega)
                 fig.canvas.draw_idle()
@@ -557,10 +807,10 @@ class PIVViewer:
             speed = np.sqrt(uvals**2 + vvals**2)
             speed_all = np.sqrt(r.u_mms[valid]**2 + r.v_mms[valid]**2)
 
-            max_speed = np.nanmax(speed_all)
-            if max_speed > 1e-6:
-                u_norm = r.u_mms[valid] / max_speed
-                v_norm = r.v_mms[valid] / max_speed
+            max_speed_norm = np.nanmax(speed_all)
+            if max_speed_norm > 1e-6:
+                u_norm = r.u_mms[valid] / max_speed_norm
+                v_norm = r.v_mms[valid] / max_speed_norm
             else:
                 u_norm = r.u_mms[valid]
                 v_norm = r.v_mms[valid]
@@ -608,7 +858,6 @@ class PIVViewer:
             except Exception as e:
                 print(f"[PIV] Advertencia streamlines: {e}")
 
-            # Mostrar todos los vectores válidos siempre y hacerlos más grandes
             quiver_scale = max(scale * 0.12, 1e-6)
 
             q = ax_vel.quiver(
@@ -637,7 +886,7 @@ class PIVViewer:
 
             artist_mgr.register("vel", q)
 
-            _style_title(ax_vel, f"Campo de velocidades · frame {idx}")
+            _style_title(ax_vel, f"Campo de velocidades · t = {r.dt_ms * idx / 1000:.3f}s")
             ax_vel.set_xlabel("x [mm]")
             ax_vel.set_ylabel("y [mm]")
 
@@ -658,7 +907,7 @@ class PIVViewer:
             ax_uv.axhline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
             ax_uv.axvline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
 
-            _style_title(ax_uv, "Espacio de velocidades (u-v)")
+            _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f}ms")
             ax_uv.set_xlabel("u [mm/s]")
             ax_uv.set_ylabel("v [mm/s]")
 
@@ -710,7 +959,7 @@ class PIVViewer:
 
                 artist_mgr.register("omega", contf)
 
-            _style_title(ax_omega, f"Campo de vorticidad · frame {idx}")
+            _style_title(ax_omega, f"Campo de vorticidad · t = {r.dt_ms * idx / 1000:.3f}s")
             ax_omega.set_xlabel("x [mm]")
             ax_omega.set_ylabel("y [mm]")
 
@@ -762,9 +1011,19 @@ class PIVViewer:
             s_momento.reset()
             s_scale.reset()
 
+        def on_key(event):
+            """Navegación con teclado"""
+            if event.key == 'right':
+                new_val = min(s_momento.val + 1, s_momento.valmax)
+                s_momento.set_val(new_val)
+            elif event.key == 'left':
+                new_val = max(s_momento.val - 1, s_momento.valmin)
+                s_momento.set_val(new_val)
+
         s_momento.on_changed(update)
         s_scale.on_changed(update)
         btn_reset.on_clicked(reset)
+        fig.canvas.mpl_connect('key_press_event', on_key)
 
         update()
         plt.show()

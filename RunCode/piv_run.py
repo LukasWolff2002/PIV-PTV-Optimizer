@@ -15,13 +15,16 @@ from PIV.Codes.OpenPIV.run import run_piv, PIVRunOptions
 def main():
     cfg_path = Path(sys.argv[1])
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    
     c = cfg["piv"]
+    camera = cfg.get("camera", {})  # ← AGREGADO: leer sección camera
 
     piv_cfg = PIVConfig(
         images_dir=Path(c["images_dir"]),
         masks_dir=Path(c["masks_dir"]),
         out_dir=Path(c["out_dir"]),
         dt_ms=float(c["dt_ms"]),
+        fps=float(camera.get("fps")),  # ← AGREGADO: FPS para timestamps
         px_per_mm=float(c["px_per_mm"]),
         window_sizes=list(c["window_sizes"]),
         overlaps=list(c["overlaps"]),

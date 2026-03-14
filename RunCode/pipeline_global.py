@@ -1,9 +1,18 @@
+# pipeline_global.py
 from __future__ import annotations
 from pathlib import Path
 import json
 import subprocess
 import re
+import sys
 
+# ============================================================
+# PROJECT ROOT (definido solo UNA vez)
+# ============================================================
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from PIV.Codes.PreProcessing.temporal_regions import TemporalRegion
 
 # ============================================================
 # 1) USER INPUTS
@@ -16,24 +25,21 @@ CONDA_BAT = r"C:\Users\MBX\anaconda3\condabin\conda.bat"
 ENV_YOLO = "yolov11"
 ENV_PIV  = "piv"
 
-# ------------------------------------------------------------
-# ROOTS
-# ------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# ============================================================
+# PATHS DE SCRIPTS (absolutos desde PROJECT_ROOT)
+# ============================================================
 RUNCODE_DIR = PROJECT_ROOT / "RunCode"
 
-# Scripts
 PREPROCESS_SCRIPT = RUNCODE_DIR / "preprocess_run.py"
 PIV_SCRIPT        = RUNCODE_DIR / "piv_run.py"
 PTV_SCRIPT        = RUNCODE_DIR / "ptv_run.py"
 CLEANUP_SCRIPT    = RUNCODE_DIR / "cleanup_run.py"
 
-# Config JSON
 CFG_PATH = RUNCODE_DIR / "pipeline_config.json"
 
-# ------------------------------------------------------------
-# PROJECT PATHS
-# ------------------------------------------------------------
+# ============================================================
+# PATHS DE DATOS (absolutos desde PROJECT_ROOT)
+# ============================================================
 PRE_BASE_DIR = PROJECT_ROOT / "PIV" / "Tomas"
 PTV_BASE_DIR = PROJECT_ROOT / "PTV" / "Tomas"
 
@@ -48,12 +54,6 @@ PIV_METODO = "piv"
 PTV_METODO = "ptv"   # si no aplica, pon None
 
 # ---------- FIX MASKS ----------
-# Estructura esperada:
-#   FixMasks/
-#     cam-1.tiff
-#     cam-2.tiff
-#     cam-3.tiff
-#     cam-4.tiff
 FIX_MASKS_DIR = PROJECT_ROOT / "FixMasks"
 
 # ---------- Perfiles por cámara ----------
@@ -83,7 +83,7 @@ CAM_PROFILES = {
         width_px=1024,
         height_px=1024,
         apply_dynamic_mask=True,
-        apply_static_mask=False,
+        apply_static_mask=True,
     ),
     4: dict(
         fps=660,
@@ -96,85 +96,87 @@ CAM_PROFILES = {
     ),
 }
 
+# ---------- PREPROCESAMIENTO PIV ----------
 CAM_PREPROCESS_PARAMS = {
-    "cam1": {
-        "roi_enabled": False,
-        "roi_x": 0,
-        "roi_y": 0,
-        "roi_width": 100,
-        "roi_height": 100,
-        "clahe_enabled": True,
-        "clahe_tile_size": 200,
-        "clahe_clip_limit": 0.0010,
-        "intensity_capping": True,
-        "capping_n_std": 5.0000,
-        "highpass_enabled": False,
-        "highpass_size": 15,
-        "wiener_enabled": False,
-        "wiener_size": 3,
-        "gaussian_size": 3,
-        "min_intensity": 0.0395,
-        "max_intensity": 1.0000,
+    'cam1': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 200,
+        'clahe_clip_limit': 0.0010,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0395,
+        'max_intensity': 1.0000,
     },
-    "cam2": {
-        "roi_enabled": False,
-        "roi_x": 0,
-        "roi_y": 0,
-        "roi_width": 100,
-        "roi_height": 100,
-        "clahe_enabled": True,
-        "clahe_tile_size": 17,
-        "clahe_clip_limit": 0.0492,
-        "intensity_capping": True,
-        "capping_n_std": 5.0000,
-        "highpass_enabled": False,
-        "highpass_size": 14,
-        "wiener_enabled": False,
-        "wiener_size": 3,
-        "gaussian_size": 3,
-        "min_intensity": 0.0000,
-        "max_intensity": 1.0000,
+    'cam2': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 17,
+        'clahe_clip_limit': 0.0492,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 14,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0000,
+        'max_intensity': 1.0000,
     },
-    "cam3": {
-        "roi_enabled": False,
-        "roi_x": 0,
-        "roi_y": 0,
-        "roi_width": 100,
-        "roi_height": 100,
-        "clahe_enabled": True,
-        "clahe_tile_size": 10,
-        "clahe_clip_limit": 0.1000,
-        "intensity_capping": True,
-        "capping_n_std": 5.0000,
-        "highpass_enabled": False,
-        "highpass_size": 15,
-        "wiener_enabled": False,
-        "wiener_size": 3,
-        "gaussian_size": 3,
-        "min_intensity": 0.0000,
-        "max_intensity": 1.0000,
+    'cam3': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 10,
+        'clahe_clip_limit': 0.1000,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0000,
+        'max_intensity': 1.0000,
     },
-    "cam4": {
-        "roi_enabled": False,
-        "roi_x": 0,
-        "roi_y": 0,
-        "roi_width": 100,
-        "roi_height": 100,
-        "clahe_enabled": True,
-        "clahe_tile_size": 10,
-        "clahe_clip_limit": 0.0100,
-        "intensity_capping": True,
-        "capping_n_std": 5.0000,
-        "highpass_enabled": False,
-        "highpass_size": 15,
-        "wiener_enabled": False,
-        "wiener_size": 3,
-        "gaussian_size": 3,
-        "min_intensity": 0.0000,
-        "max_intensity": 0.7237,
+    'cam4': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 10,
+        'clahe_clip_limit': 0.0100,
+        'intensity_capping': True,
+        'capping_n_std': 5.0000,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 0.0000,
+        'max_intensity': 0.7237,
     },
 }
 
+# ---------- PREPROCESAMIENTO PTV ----------
 CAM_PREPROCESS_PARAMS_PTV = {
     'cam1': {
         'roi_enabled': False,
@@ -254,21 +256,147 @@ CAM_PREPROCESS_PARAMS_PTV = {
     },
 }
 
-# --- Preprocess: muestreo por bloques ---
-BLOCKS      = 200
-BLOCK_SIZE  = 50
-SKIP_INTER  = 0
-SKIP_FINAL  = 48
+# ---------- REGIONES TEMPORALES ADAPTATIVAS ----------
+USE_TEMPORAL_REGIONS = True  # True = adaptativo, False = legacy
+
+
+CAM_TEMPORAL_REGIONS = {
+    1: [
+        TemporalRegion(
+            name="alta_velocidad",
+            start_time=0.0,
+            end_time=2.0,
+            block_size=11,
+            skip_inter=0,
+            skip_final=9,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="media_velocidad",
+            start_time=2.0,
+            end_time=5.0,
+            block_size=22,
+            skip_inter=1,
+            skip_final=19,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="baja_velocidad",
+            start_time=5.0,
+            end_time=10.0,  # ← Hasta el final automático
+            block_size=22,
+            skip_inter=2,
+            skip_final=18,
+            fps=220.0
+        ),
+    ],
+
+    2: [
+        TemporalRegion(
+            name="alta_velocidad",
+            start_time=0.0,
+            end_time=1.0,
+            block_size=11,
+            skip_inter=0,
+            skip_final=9,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="media_velocidad",
+            start_time=1.0,
+            end_time=3.0,
+            block_size=11,
+            skip_inter=1,
+            skip_final=8,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="baja_velocidad",
+            start_time=3.0,
+            end_time=None,  # ← Hasta el final automático
+            block_size=22,
+            skip_inter=2,
+            skip_final=18,
+            fps=220.0
+        ),
+    ],
+
+    3: [
+        TemporalRegion(
+            name="alta_velocidad",
+            start_time=0.0,
+            end_time=1.0,
+            block_size=11,
+            skip_inter=0,
+            skip_final=9,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="media_velocidad",
+            start_time=1.0,
+            end_time=3.0,
+            block_size=11,
+            skip_inter=1,
+            skip_final=8,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="baja_velocidad",
+            start_time=3.0,
+            end_time=None,  # ← Hasta el final automático
+            block_size=22,
+            skip_inter=2,
+            skip_final=18,
+            fps=220.0
+        ),
+    ],
+
+    4: [
+        TemporalRegion(
+            name="alta_velocidad",
+            start_time=0.0,
+            end_time=1.0,
+            block_size=33,
+            skip_inter=0,
+            skip_final=31,
+            fps=660.0
+        ),
+        TemporalRegion(
+            name="media_velocidad",
+            start_time=1.0,
+            end_time=3.0,
+            block_size=33,
+            skip_inter=1,
+            skip_final=30,
+            fps=660.0
+        ),
+        TemporalRegion(
+            name="baja_velocidad",
+            start_time=3.0,
+            end_time=None,  # ← Hasta el final automático
+            block_size=66,
+            skip_inter=2,
+            skip_final=62,
+            fps=660.0
+        ),
+    ],
+}
+
+# ---------- PARÁMETROS LEGACY (solo si USE_TEMPORAL_REGIONS = False) ----------
+BLOCKS = None  # None = todos los bloques posibles
+BLOCK_SIZE = 22
+SKIP_INTER = 0
+SKIP_FINAL = 20
 DELETE_EXISTING_PRE = True
 
-# --- Modelo YOLO máscaras (para PIV) ---
+# ---------- Modelo YOLO máscaras (para PIV) ----------
 MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "cam1-piv.pt"
-MASK_CONF = 0.25
+MASK_CONF  = 0.25
 MASK_DEVICE = "0"
 INVERT_MASK = True
 DELETE_EXISTING_MASKS = True
 
-# --- Parámetros PIV (comunes) ---
+# ---------- Parámetros PIV (comunes) ----------
 WINDOW_SIZES = [64, 32, 16]
 OVERLAPS     = [32, 16, 8]
 SEARCH_AREA_FACTOR = 1
@@ -281,11 +409,11 @@ LM_EPS    = 0.1
 SHOW_VIEWERS = True
 CLEAR_TXT = True
 
-# --- Modelo YOLO tracking (PTV) ---
+# ---------- Modelo YOLO tracking (PTV) ----------
 YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
 RUNS_SEGMENT_DIR = PROJECT_ROOT / "runs" / "segment"
 
-# --- Parámetros PTV (comunes) ---
+# ---------- Parámetros PTV (comunes) ----------
 MAX_IMAGES = 100
 ALPHA = 0.95
 BETA  = 0.95
@@ -297,7 +425,7 @@ CONF_TRACK = 0.25
 MIN_FRAMES_KEEP = 20
 ANNOTATE = True
 
-# --- Cleanup ---
+# ---------- Cleanup ----------
 DELETE_PROCESSED_SUBFOLDERS = True
 DELETE_PREDICT_FOLDERS = False
 
@@ -320,7 +448,6 @@ def parse_subfolder_name(name: str) -> dict | None:
 def list_matching_subfolders(root: Path, metodo: str | None = None) -> list[Path]:
     if not root.is_dir():
         return []
-
     out: list[Path] = []
     for p in root.iterdir():
         if not p.is_dir():
@@ -331,7 +458,6 @@ def list_matching_subfolders(root: Path, metodo: str | None = None) -> list[Path
         if metodo is not None and info["metodo"].lower() != metodo.lower():
             continue
         out.append(p)
-
     out.sort(key=lambda p: natural_key(p.name))
     return out
 
@@ -342,11 +468,9 @@ def cam_profile_for_folder(folder: Path) -> tuple[int, dict]:
     info = parse_subfolder_name(folder.name)
     if info is None:
         raise RuntimeError(f"Nombre inválido: {folder.name}")
-
     cam = int(info["cam"])
     if cam not in CAM_PROFILES:
         raise RuntimeError(f"No hay perfil definido para cam={cam}. Define CAM_PROFILES[{cam}]")
-
     prof = dict(CAM_PROFILES[cam])
     prof["fixed_mask_path"] = str(fixed_mask_path_for_cam(cam))
     return cam, prof
@@ -381,6 +505,24 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
     ptv_preprocess_params = CAM_PREPROCESS_PARAMS_PTV.get(f"cam{cam}", {})
     
     fixed_mask_path = Path(prof["fixed_mask_path"]) if prof.get("fixed_mask_path") else None
+    
+    # Preparar regiones temporales si están habilitadas
+    temporal_regions_config = None
+    if USE_TEMPORAL_REGIONS and cam in CAM_TEMPORAL_REGIONS:
+        regions = CAM_TEMPORAL_REGIONS[cam]
+        if regions:
+            temporal_regions_config = [
+                {
+                    "name": r.name,
+                    "start_time": r.start_time,
+                    "end_time": r.end_time,
+                    "block_size": r.block_size,
+                    "skip_inter": r.skip_inter,
+                    "skip_final": r.skip_final,
+                    "fps": r.fps,
+                }
+                for r in regions
+            ]
 
     cfg = {
         "meta": {
@@ -414,6 +556,9 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
             "skip_final": SKIP_FINAL,
             "delete_existing": DELETE_EXISTING_PRE,
             "preprocess_params": preprocess_params,
+            # Regiones temporales adaptativas
+            "use_temporal_regions": USE_TEMPORAL_REGIONS and temporal_regions_config is not None,
+            "temporal_regions": temporal_regions_config,
         },
 
         "masks": {
@@ -431,8 +576,8 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
 
         "piv": {
             "images_dir": str(PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_dir": str(MASKS_ROOT / pre_name) if pre_sub else None,
-            "out_dir": str(RESULTS_PIV_ROOT / pre_name) if pre_sub else None,
+            "masks_dir":  str(MASKS_ROOT / pre_name) if pre_sub else None,
+            "out_dir":    str(RESULTS_PIV_ROOT / pre_name) if pre_sub else None,
             "dt_ms": prof["dt_ms"],
             "px_per_mm": prof["px_per_mm"],
             "width_px": prof["width_px"],
@@ -450,7 +595,7 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
             "lm_thresh": LM_THRESH,
             "lm_eps": LM_EPS,
             "show_viewers": SHOW_VIEWERS,
-            "clear_txt_before_export": CLEAR_TXT,
+            "clear_txt_before_export": CLEAR_TXT
         },
 
         "ptv": {
@@ -482,8 +627,8 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
             "masks_dir_to_delete": str(MASKS_ROOT / pre_name) if pre_sub else None,
             "delete_processed_subfolders": DELETE_PROCESSED_SUBFOLDERS,
             "delete_predict_folders": DELETE_PREDICT_FOLDERS,
-            "runs_segment_dir": str(RUNS_SEGMENT_DIR),
-        },
+            "runs_segment_dir": str(RUNS_SEGMENT_DIR)
+        }
     }
 
     CFG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
