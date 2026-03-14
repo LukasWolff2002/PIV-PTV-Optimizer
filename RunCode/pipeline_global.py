@@ -262,7 +262,7 @@ SKIP_FINAL  = 48
 DELETE_EXISTING_PRE = True
 
 # --- Modelo YOLO máscaras (para PIV) ---
-MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "cam3-piv.pt"
+MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "cam1-piv.pt"
 MASK_CONF = 0.25
 MASK_DEVICE = "0"
 INVERT_MASK = True

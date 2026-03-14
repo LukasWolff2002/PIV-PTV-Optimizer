@@ -283,7 +283,7 @@ def copiar_preprocesar_y_convertir_fotos_random(carpeta_origen, carpeta_destino,
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
-RUTA_ORIGEN = r"PIV\Tomas\m85-toma-1-cam-1-n-0750-car-05-piv"
+RUTA_ORIGEN = r"PIV\Tomas\m93-toma-2-cam-1-n-0000-car-05-piv"
 RUTA_DESTINO = r"fotos_random"
 NUMERO_DE_FOTOS = 500
 
