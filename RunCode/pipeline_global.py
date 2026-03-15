@@ -283,10 +283,19 @@ CAM_TEMPORAL_REGIONS = {
         TemporalRegion(
             name="baja_velocidad",
             start_time=5.0,
-            end_time=10.0,  # ← Hasta el final automático
+            end_time=20.0,  # ← Hasta el final automático
             block_size=22,
             skip_inter=2,
             skip_final=18,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="muy_baja_velocidad",
+            start_time=20.0,
+            end_time=50.0,  # ← Hasta el final automático
+            block_size=44,
+            skip_inter=8,
+            skip_final=34,
             fps=220.0
         ),
     ],
@@ -390,7 +399,7 @@ SKIP_FINAL = 20
 DELETE_EXISTING_PRE = True
 
 # ---------- Modelo YOLO máscaras (para PIV) ----------
-MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "cam1-piv.pt"
+MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "cam1-piv-yolo26.pt"
 MASK_CONF  = 0.25
 MASK_DEVICE = "0"
 INVERT_MASK = True

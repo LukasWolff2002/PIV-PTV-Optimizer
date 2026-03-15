@@ -6,7 +6,7 @@ from typing import List, Tuple, Dict
 import os
 import json
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
+import re
 from tqdm import tqdm
 
 from .config import PIVConfig
@@ -14,12 +14,16 @@ from .models import PairJob, PIVResult, PIVResultFinal
 from .utils import ensure_folder, pair_indices
 from .workers import compute_pair_worker, validate_pair_worker
 
+def _natural_sort_key(path: Path) -> List:
+    """Clave para ordenamiento natural (numérico) de nombres de archivo"""
+    return [int(t) if t.isdigit() else t.lower() 
+            for t in re.split(r'(\d+)', str(path.name))]
 
 def _list_images(images_dir: Path) -> List[Path]:
-    imgs = sorted(images_dir.glob("*.tiff*"))
+    imgs = sorted(images_dir.glob("*.tiff*"), key=_natural_sort_key)  # ← orden natural (CORRECTO)
     if not imgs:
         # Intentar con PNG si no hay TIFF
-        imgs = sorted(images_dir.glob("*.png"))
+        imgs = sorted(images_dir.glob("*.png"), key=_natural_sort_key)
     return imgs
 
 

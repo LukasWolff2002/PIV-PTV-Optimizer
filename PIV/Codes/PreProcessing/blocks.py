@@ -192,7 +192,7 @@ def run_adaptive_block_sampling(
                 # Formato: {original_stem}_r{region}b{block}s{skip}{ext}
                 stem = src.stem
                 ext = src.suffix
-                new_name = f"{stem}_r{region_idx+1}b{block_idx+1:03d}s{region.skip_inter}{ext}"
+                new_name = f"frame_{global_idx:05d}_r{region_idx+1}b{block_idx+1:03d}s{region.skip_inter}{ext}"
                 dst = output_dir / new_name
                 
                 # Guardar nombres para metadata
