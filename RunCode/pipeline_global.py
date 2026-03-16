@@ -1,4 +1,3 @@
-# pipeline_global.py
 from __future__ import annotations
 from pathlib import Path
 import json
@@ -7,15 +6,17 @@ import re
 import sys
 
 # ============================================================
-# PROJECT ROOT (definido solo UNA vez)
+# PROJECT ROOT
 # ============================================================
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from PIV.Codes.PreProcessing.temporal_regions import TemporalRegion
+# Importar variables de módulos separados
+import variables_piv as piv_vars
+import variables_ptv as ptv_vars
 
 # ============================================================
-# 1) USER INPUTS
+# CONFIGURACIÓN PRINCIPAL
 # ============================================================
 
 RUN_MODE = "piv"  # "piv" | "ptv" | "both"
@@ -23,44 +24,24 @@ ALLOW_BOTH_WITHOUT_PTV = True
 
 CONDA_BAT = r"C:\Users\MBX\anaconda3\condabin\conda.bat"
 ENV_YOLO = "yolov11"
-ENV_PIV  = "piv"
+ENV_PIV = "piv"
 
-# ============================================================
-# PATHS DE SCRIPTS (absolutos desde PROJECT_ROOT)
-# ============================================================
+# ---------- PATHS DE SCRIPTS ----------
 RUNCODE_DIR = PROJECT_ROOT / "RunCode"
-
 PREPROCESS_SCRIPT = RUNCODE_DIR / "preprocess_run.py"
-PIV_SCRIPT        = RUNCODE_DIR / "piv_run.py"
-PTV_SCRIPT        = RUNCODE_DIR / "ptv_run.py"
-CLEANUP_SCRIPT    = RUNCODE_DIR / "cleanup_run.py"
-
+PIV_SCRIPT = RUNCODE_DIR / "piv_run.py"
+PTV_SCRIPT = RUNCODE_DIR / "ptv_run.py"
+CLEANUP_SCRIPT = RUNCODE_DIR / "cleanup_run.py"
 CFG_PATH = RUNCODE_DIR / "pipeline_config.json"
 
-# ============================================================
-# PATHS DE DATOS (absolutos desde PROJECT_ROOT)
-# ============================================================
-PRE_BASE_DIR = PROJECT_ROOT / "PIV" / "Tomas"
-PTV_BASE_DIR = PROJECT_ROOT / "PTV" / "Tomas"
-
-PROCESSED_ROOT = PROJECT_ROOT / "TomasProcesadas"
-MASKS_ROOT     = PROJECT_ROOT / "Masks"
-
-RESULTS_PIV_ROOT = PROJECT_ROOT / "ResultadosPIV"
-RESULTS_PTV_ROOT = PROJECT_ROOT / "ResultadosPTV"
-
-# Si quieres filtrar por método en el nombre
-PIV_METODO = "piv"
-PTV_METODO = "ptv"   # si no aplica, pon None
-
-# ---------- FIX MASKS ----------
+# ---------- DIRECTORIO DE MÁSCARAS FIJAS (COMPARTIDO) ----------
 FIX_MASKS_DIR = PROJECT_ROOT / "FixMasks"
 
-# ---------- Perfiles por cámara ----------
+# ---------- PERFILES POR CÁMARA (COMPARTIDO PIV/PTV) ----------
 CAM_PROFILES = {
     1: dict(
         fps=220,
-        dt_ms=1000*(1/220),
+        dt_ms=1000 * (1 / 220),
         px_per_mm=8,
         width_px=1024,
         height_px=1024,
@@ -69,7 +50,7 @@ CAM_PROFILES = {
     ),
     2: dict(
         fps=220,
-        dt_ms=1000*(1/220),
+        dt_ms=1000 * (1 / 220),
         px_per_mm=7.8,
         width_px=1024,
         height_px=1024,
@@ -78,7 +59,7 @@ CAM_PROFILES = {
     ),
     3: dict(
         fps=220,
-        dt_ms=1000*(1/220),
+        dt_ms=1000 * (1 / 220),
         px_per_mm=7.8,
         width_px=1024,
         height_px=1024,
@@ -87,7 +68,7 @@ CAM_PROFILES = {
     ),
     4: dict(
         fps=660,
-        dt_ms=1000*(1/660),
+        dt_ms=1000 * (1 / 660),
         px_per_mm=10.7,
         width_px=380,
         height_px=380,
@@ -96,363 +77,24 @@ CAM_PROFILES = {
     ),
 }
 
-# ---------- PREPROCESAMIENTO PIV ----------
-CAM_PREPROCESS_PARAMS = {
-    'cam1': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 200,
-        'clahe_clip_limit': 0.0010,
-        'intensity_capping': True,
-        'capping_n_std': 5.0000,
-        'highpass_enabled': False,
-        'highpass_size': 15,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.0395,
-        'max_intensity': 1.0000,
-    },
-    'cam2': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 17,
-        'clahe_clip_limit': 0.0492,
-        'intensity_capping': True,
-        'capping_n_std': 5.0000,
-        'highpass_enabled': False,
-        'highpass_size': 14,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.0000,
-        'max_intensity': 1.0000,
-    },
-    'cam3': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 10,
-        'clahe_clip_limit': 0.1000,
-        'intensity_capping': True,
-        'capping_n_std': 5.0000,
-        'highpass_enabled': False,
-        'highpass_size': 15,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.0000,
-        'max_intensity': 1.0000,
-    },
-    'cam4': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 10,
-        'clahe_clip_limit': 0.0100,
-        'intensity_capping': True,
-        'capping_n_std': 5.0000,
-        'highpass_enabled': False,
-        'highpass_size': 15,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.0000,
-        'max_intensity': 0.7237,
-    },
-}
-
-# ---------- PREPROCESAMIENTO PTV ----------
-CAM_PREPROCESS_PARAMS_PTV = {
-    'cam1': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 175,
-        'clahe_clip_limit': 0.1000,
-        'intensity_capping': True,
-        'capping_n_std': 3.1053,
-        'highpass_enabled': False,
-        'highpass_size': 28,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.1579,
-        'max_intensity': 0.7368,
-    },
-    'cam2': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 155,
-        'clahe_clip_limit': 0.0010,
-        'intensity_capping': True,
-        'capping_n_std': 5.0000,
-        'highpass_enabled': False,
-        'highpass_size': 14,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.1974,
-        'max_intensity': 0.8421,
-    },
-    'cam3': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 159,
-        'clahe_clip_limit': 0.1000,
-        'intensity_capping': True,
-        'capping_n_std': 1.9474,
-        'highpass_enabled': False,
-        'highpass_size': 15,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.1053,
-        'max_intensity': 0.7763,
-    },
-    'cam4': {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 200,
-        'clahe_clip_limit': 0.0635,
-        'intensity_capping': True,
-        'capping_n_std': 3.1053,
-        'highpass_enabled': False,
-        'highpass_size': 15,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.1053,
-        'max_intensity': 0.8289,
-    },
-}
-
-# ---------- REGIONES TEMPORALES ADAPTATIVAS ----------
-USE_TEMPORAL_REGIONS = True  # True = adaptativo, False = legacy
-
-
-CAM_TEMPORAL_REGIONS = {
-    1: [
-        TemporalRegion(
-            name="alta_velocidad",
-            start_time=0.0,
-            end_time=2.0,
-            block_size=11,
-            skip_inter=0,
-            skip_final=9,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="media_velocidad",
-            start_time=2.0,
-            end_time=5.0,
-            block_size=22,
-            skip_inter=1,
-            skip_final=19,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="baja_velocidad",
-            start_time=5.0,
-            end_time=20.0,  # ← Hasta el final automático
-            block_size=22,
-            skip_inter=2,
-            skip_final=18,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="muy_baja_velocidad",
-            start_time=20.0,
-            end_time=50.0,  # ← Hasta el final automático
-            block_size=44,
-            skip_inter=8,
-            skip_final=34,
-            fps=220.0
-        ),
-    ],
-
-    2: [
-        TemporalRegion(
-            name="alta_velocidad",
-            start_time=0.0,
-            end_time=1.0,
-            block_size=11,
-            skip_inter=0,
-            skip_final=9,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="media_velocidad",
-            start_time=1.0,
-            end_time=3.0,
-            block_size=11,
-            skip_inter=1,
-            skip_final=8,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="baja_velocidad",
-            start_time=3.0,
-            end_time=None,  # ← Hasta el final automático
-            block_size=22,
-            skip_inter=2,
-            skip_final=18,
-            fps=220.0
-        ),
-    ],
-
-    3: [
-        TemporalRegion(
-            name="alta_velocidad",
-            start_time=0.0,
-            end_time=1.0,
-            block_size=11,
-            skip_inter=0,
-            skip_final=9,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="media_velocidad",
-            start_time=1.0,
-            end_time=3.0,
-            block_size=11,
-            skip_inter=1,
-            skip_final=8,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="baja_velocidad",
-            start_time=3.0,
-            end_time=None,  # ← Hasta el final automático
-            block_size=22,
-            skip_inter=2,
-            skip_final=18,
-            fps=220.0
-        ),
-    ],
-
-    4: [
-        TemporalRegion(
-            name="alta_velocidad",
-            start_time=0.0,
-            end_time=1.0,
-            block_size=33,
-            skip_inter=0,
-            skip_final=31,
-            fps=660.0
-        ),
-        TemporalRegion(
-            name="media_velocidad",
-            start_time=1.0,
-            end_time=3.0,
-            block_size=33,
-            skip_inter=1,
-            skip_final=30,
-            fps=660.0
-        ),
-        TemporalRegion(
-            name="baja_velocidad",
-            start_time=3.0,
-            end_time=None,  # ← Hasta el final automático
-            block_size=66,
-            skip_inter=2,
-            skip_final=62,
-            fps=660.0
-        ),
-    ],
-}
-
-# ---------- PARÁMETROS LEGACY (solo si USE_TEMPORAL_REGIONS = False) ----------
-BLOCKS = None  # None = todos los bloques posibles
-BLOCK_SIZE = 22
-SKIP_INTER = 0
-SKIP_FINAL = 20
-DELETE_EXISTING_PRE = True
-
-# ---------- Modelo YOLO máscaras (para PIV) ----------
-MASK_MODEL = PROJECT_ROOT / "PIV" / "Codes" / "Segmentation-Models" / "cam1-piv-yolo26.pt"
-MASK_CONF  = 0.25
-MASK_DEVICE = "0"
-INVERT_MASK = True
-DELETE_EXISTING_MASKS = True
-
-# ---------- Parámetros PIV (comunes) ----------
-WINDOW_SIZES = [64, 32, 16]
-OVERLAPS     = [32, 16, 8]
-SEARCH_AREA_FACTOR = 1
-SIG2NOISE_METHOD   = "peak2peak"
-MASK_THRESHOLD = 0.0
-KEEP_PERCENTILE = 80.0
-LM_KERNEL = 1
-LM_THRESH = 3.0
-LM_EPS    = 0.1
-SHOW_VIEWERS = True
-CLEAR_TXT = True
-
-# ---------- Modelo YOLO tracking (PTV) ----------
-YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
-RUNS_SEGMENT_DIR = PROJECT_ROOT / "runs" / "segment"
-
-# ---------- Parámetros PTV (comunes) ----------
-MAX_IMAGES = 100
-ALPHA = 0.95
-BETA  = 0.95
-GAMMA = 0.05
-GATE_X = 10
-GATE_Y = 10
-GATE_ANGLE = 5
-CONF_TRACK = 0.25
-MIN_FRAMES_KEEP = 20
-ANNOTATE = True
-
-# ---------- Cleanup ----------
-DELETE_PROCESSED_SUBFOLDERS = True
-DELETE_PREDICT_FOLDERS = False
-
 
 # ============================================================
-# 2) HELPERS
+# HELPERS
 # ============================================================
 
 def natural_key(s: str):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
+
 NAME_RE = re.compile(
     r"^m(?P<mezcla>\d+)-toma-(?P<toma>\d+)-cam-(?P<cam>\d+)-n-(?P<n>\d+)-car-(?P<car>\d+)-(?P<metodo>[A-Za-z0-9_]+)$"
 )
 
+
 def parse_subfolder_name(name: str) -> dict | None:
     m = NAME_RE.match(name)
     return m.groupdict() if m else None
+
 
 def list_matching_subfolders(root: Path, metodo: str | None = None) -> list[Path]:
     if not root.is_dir():
@@ -470,19 +112,35 @@ def list_matching_subfolders(root: Path, metodo: str | None = None) -> list[Path
     out.sort(key=lambda p: natural_key(p.name))
     return out
 
+
 def fixed_mask_path_for_cam(cam: int) -> Path:
     return FIX_MASKS_DIR / f"cam-{cam}.tiff"
 
-def cam_profile_for_folder(folder: Path) -> tuple[int, dict]:
+
+def piv_model_path_for_cam(cam: int) -> Path:
+    """Retorna el path del modelo PIV para la cámara especificada."""
+    return piv_vars.PIV_MODELS_DIR / f"cam{cam}-piv-yolo26.pt"
+
+
+def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict]:
+    """
+    Retorna (cam, carbopol, profile_dict)
+    """
     info = parse_subfolder_name(folder.name)
     if info is None:
         raise RuntimeError(f"Nombre inválido: {folder.name}")
+
     cam = int(info["cam"])
+    carbopol = info["car"]  # "02" o "05"
+
     if cam not in CAM_PROFILES:
-        raise RuntimeError(f"No hay perfil definido para cam={cam}. Define CAM_PROFILES[{cam}]")
+        raise RuntimeError(f"No hay perfil definido para cam={cam}")
+
     prof = dict(CAM_PROFILES[cam])
     prof["fixed_mask_path"] = str(fixed_mask_path_for_cam(cam))
-    return cam, prof
+
+    return cam, carbopol, prof
+
 
 def run_env(env: str, script: Path) -> None:
     subprocess.run(
@@ -490,6 +148,7 @@ def run_env(env: str, script: Path) -> None:
         check=True,
         cwd=str(PROJECT_ROOT),
     )
+
 
 def run_any(script: Path) -> None:
     subprocess.run(
@@ -500,25 +159,34 @@ def run_any(script: Path) -> None:
 
 
 # ============================================================
-# 3) BUILD CONFIG JSON (por carpeta)
+# BUILD CONFIG JSON
 # ============================================================
 
-def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) -> None:
+def write_cfg(
+    pre_sub: Path | None,
+    ptv_sub: Path | None,
+    cam: int,
+    carbopol: str,
+    prof: dict
+) -> None:
     pre_info = parse_subfolder_name(pre_sub.name) if pre_sub else None
     ptv_info = parse_subfolder_name(ptv_sub.name) if ptv_sub else None
 
     pre_name = pre_sub.name if pre_sub else ""
     ptv_name = ptv_sub.name if ptv_sub else ""
 
-    preprocess_params = CAM_PREPROCESS_PARAMS.get(f"cam{cam}", {})
-    ptv_preprocess_params = CAM_PREPROCESS_PARAMS_PTV.get(f"cam{cam}", {})
-    
+    preprocess_params = piv_vars.CAM_PREPROCESS_PARAMS.get(f"cam{cam}", {})
+    ptv_preprocess_params = ptv_vars.CAM_PREPROCESS_PARAMS_PTV.get(f"cam{cam}", {})
+
     fixed_mask_path = Path(prof["fixed_mask_path"]) if prof.get("fixed_mask_path") else None
-    
+
+    # Selección automática del modelo PIV según cámara
+    piv_model_path = piv_model_path_for_cam(cam)
+
     # Preparar regiones temporales si están habilitadas
     temporal_regions_config = None
-    if USE_TEMPORAL_REGIONS and cam in CAM_TEMPORAL_REGIONS:
-        regions = CAM_TEMPORAL_REGIONS[cam]
+    if piv_vars.USE_TEMPORAL_REGIONS:
+        regions = piv_vars.get_temporal_regions(cam, carbopol)
         if regions:
             temporal_regions_config = [
                 {
@@ -532,10 +200,13 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
                 }
                 for r in regions
             ]
+        else:
+            print(f"[WARN] No hay regiones temporales para cam={cam}, carbopol={carbopol}", flush=True)
 
     cfg = {
         "meta": {
             "cam": cam,
+            "carbopol": carbopol,
             "cam_profile": prof,
             "pre_subfolder": pre_sub.name if pre_sub else None,
             "ptv_subfolder": ptv_sub.name if ptv_sub else None,
@@ -557,36 +228,35 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
 
         "pre": {
             "input_subdir": str(pre_sub) if pre_sub else None,
-            "dest_out_dir": str(PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_out_dir": str(MASKS_ROOT / pre_name) if pre_sub else None,
-            "blocks": BLOCKS,
-            "block_size": BLOCK_SIZE,
-            "skip_inter": SKIP_INTER,
-            "skip_final": SKIP_FINAL,
-            "delete_existing": DELETE_EXISTING_PRE,
+            "dest_out_dir": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "masks_out_dir": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "blocks": piv_vars.BLOCKS,
+            "block_size": piv_vars.BLOCK_SIZE,
+            "skip_inter": piv_vars.SKIP_INTER,
+            "skip_final": piv_vars.SKIP_FINAL,
+            "delete_existing": piv_vars.DELETE_EXISTING_PRE,
             "preprocess_params": preprocess_params,
-            # Regiones temporales adaptativas
-            "use_temporal_regions": USE_TEMPORAL_REGIONS and temporal_regions_config is not None,
+            "use_temporal_regions": piv_vars.USE_TEMPORAL_REGIONS and temporal_regions_config is not None,
             "temporal_regions": temporal_regions_config,
         },
 
         "masks": {
-            "model_path": str(MASK_MODEL),
-            "images_dir": str(PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "output_dir": str(MASKS_ROOT / pre_name) if pre_sub else None,
-            "conf_thresh": MASK_CONF,
-            "device": MASK_DEVICE,
-            "invert_mask": INVERT_MASK,
-            "delete_existing": DELETE_EXISTING_MASKS,
+            "model_path": str(piv_model_path),
+            "images_dir": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "output_dir": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "conf_thresh": piv_vars.MASK_CONF,
+            "device": piv_vars.MASK_DEVICE,
+            "invert_mask": piv_vars.INVERT_MASK,
+            "delete_existing": piv_vars.DELETE_EXISTING_MASKS,
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
             "apply_static_mask": bool(prof["apply_static_mask"]),
             "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
         },
 
         "piv": {
-            "images_dir": str(PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_dir":  str(MASKS_ROOT / pre_name) if pre_sub else None,
-            "out_dir":    str(RESULTS_PIV_ROOT / pre_name) if pre_sub else None,
+            "images_dir": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "masks_dir": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "out_dir": str(piv_vars.RESULTS_PIV_ROOT / pre_name) if pre_sub else None,
             "dt_ms": prof["dt_ms"],
             "px_per_mm": prof["px_per_mm"],
             "width_px": prof["width_px"],
@@ -594,49 +264,49 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
             "apply_static_mask": bool(prof["apply_static_mask"]),
             "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
-            "window_sizes": WINDOW_SIZES,
-            "overlaps": OVERLAPS,
-            "search_area_factor": SEARCH_AREA_FACTOR,
-            "sig2noise_method": SIG2NOISE_METHOD,
-            "mask_threshold": MASK_THRESHOLD,
-            "keep_percentile": KEEP_PERCENTILE,
-            "lm_kernel": LM_KERNEL,
-            "lm_thresh": LM_THRESH,
-            "lm_eps": LM_EPS,
-            "show_viewers": SHOW_VIEWERS,
-            "clear_txt_before_export": CLEAR_TXT
+            "window_sizes": piv_vars.WINDOW_SIZES,
+            "overlaps": piv_vars.OVERLAPS,
+            "search_area_factor": piv_vars.SEARCH_AREA_FACTOR,
+            "sig2noise_method": piv_vars.SIG2NOISE_METHOD,
+            "mask_threshold": piv_vars.MASK_THRESHOLD,
+            "keep_percentile": piv_vars.KEEP_PERCENTILE,
+            "lm_kernel": piv_vars.LM_KERNEL,
+            "lm_thresh": piv_vars.LM_THRESH,
+            "lm_eps": piv_vars.LM_EPS,
+            "show_viewers": piv_vars.SHOW_VIEWERS,
+            "clear_txt_before_export": piv_vars.CLEAR_TXT
         },
 
         "ptv": {
             "images_dir": str(ptv_sub) if ptv_sub else None,
-            "out_dir": str(RESULTS_PTV_ROOT / ptv_name) if ptv_sub else None,
-            "weights_path": str(YOLO_TRACK_MODEL),
-            "runs_segment_dir": str(RUNS_SEGMENT_DIR),
+            "out_dir": str(ptv_vars.RESULTS_PTV_ROOT / ptv_name) if ptv_sub else None,
+            "weights_path": str(ptv_vars.YOLO_TRACK_MODEL),
+            "runs_segment_dir": str(ptv_vars.RUNS_SEGMENT_DIR),
             "fps": prof["fps"],
             "width_px": prof["width_px"],
             "height_px": prof["height_px"],
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
             "apply_static_mask": bool(prof["apply_static_mask"]),
             "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
-            "max_images": MAX_IMAGES,
-            "alpha": ALPHA,
-            "beta": BETA,
-            "gamma": GAMMA,
-            "gate_x_px": GATE_X,
-            "gate_y_px": GATE_Y,
-            "gate_angle_deg": GATE_ANGLE,
-            "conf": CONF_TRACK,
-            "min_frames_keep": MIN_FRAMES_KEEP,
-            "annotate": ANNOTATE,
+            "max_images": ptv_vars.MAX_IMAGES,
+            "alpha": ptv_vars.ALPHA,
+            "beta": ptv_vars.BETA,
+            "gamma": ptv_vars.GAMMA,
+            "gate_x_px": ptv_vars.GATE_X,
+            "gate_y_px": ptv_vars.GATE_Y,
+            "gate_angle_deg": ptv_vars.GATE_ANGLE,
+            "conf": ptv_vars.CONF_TRACK,
+            "min_frames_keep": ptv_vars.MIN_FRAMES_KEEP,
+            "annotate": ptv_vars.ANNOTATE,
             "preprocess_params": ptv_preprocess_params,
         },
 
         "cleanup": {
-            "processed_dir_to_delete": str(PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_dir_to_delete": str(MASKS_ROOT / pre_name) if pre_sub else None,
-            "delete_processed_subfolders": DELETE_PROCESSED_SUBFOLDERS,
-            "delete_predict_folders": DELETE_PREDICT_FOLDERS,
-            "runs_segment_dir": str(RUNS_SEGMENT_DIR)
+            "processed_dir_to_delete": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "masks_dir_to_delete": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "delete_processed_subfolders": piv_vars.DELETE_PROCESSED_SUBFOLDERS,
+            "delete_predict_folders": ptv_vars.DELETE_PREDICT_FOLDERS,
+            "runs_segment_dir": str(ptv_vars.RUNS_SEGMENT_DIR)
         }
     }
 
@@ -644,12 +314,13 @@ def write_cfg(pre_sub: Path | None, ptv_sub: Path | None, cam: int, prof: dict) 
 
 
 # ============================================================
-# 4) PIPELINES (por carpeta)
+# PIPELINES
 # ============================================================
 
 def run_one_piv_folder(pre_sub: Path) -> None:
-    cam, prof = cam_profile_for_folder(pre_sub)
+    cam, carbopol, prof = cam_profile_for_folder(pre_sub)
 
+    # Validar máscara estática
     if prof["apply_static_mask"]:
         fmp = Path(prof["fixed_mask_path"])
         if not fmp.exists():
@@ -657,24 +328,30 @@ def run_one_piv_folder(pre_sub: Path) -> None:
                 f"apply_static_mask=True pero no existe máscara fija para cam={cam}: {fmp}"
             )
 
-    write_cfg(pre_sub=pre_sub, ptv_sub=None, cam=cam, prof=prof)
+    # Validar modelo PIV
+    piv_model = piv_model_path_for_cam(cam)
+    if not piv_model.exists():
+        raise FileNotFoundError(f"No existe modelo PIV para cam={cam}: {piv_model}")
 
-    print(f"\n[PIPE] === PIV folder: {pre_sub.name} (cam={cam}) ===", flush=True)
-    print(f"[PIPE] cam profile: {prof}", flush=True)
+    write_cfg(pre_sub=pre_sub, ptv_sub=None, cam=cam, carbopol=carbopol, prof=prof)
+
+    print(f"\n[PIPE] === PIV: {pre_sub.name} (cam={cam}, car={carbopol}) ===", flush=True)
+    print(f"[PIPE] Modelo: {piv_model.name}", flush=True)
 
     print("[PIPE] 1) PRE + MASKS", flush=True)
     run_env(ENV_YOLO, PREPROCESS_SCRIPT)
 
-    print(f"[PIPE] 2) PIV -> {RESULTS_PIV_ROOT / pre_sub.name}", flush=True)
+    print(f"[PIPE] 2) PIV -> {piv_vars.RESULTS_PIV_ROOT / pre_sub.name}", flush=True)
     run_env(ENV_PIV, PIV_SCRIPT)
 
-    print("[PIPE] 3) CLEANUP pre outputs", flush=True)
+    print("[PIPE] 3) CLEANUP", flush=True)
     run_any(CLEANUP_SCRIPT)
 
-    print(f"[OK] PIV listo: {pre_sub.name}", flush=True)
+    print(f"[OK] PIV completado: {pre_sub.name}\n", flush=True)
+
 
 def run_one_ptv_folder(ptv_sub: Path) -> None:
-    cam, prof = cam_profile_for_folder(ptv_sub)
+    cam, carbopol, prof = cam_profile_for_folder(ptv_sub)
 
     if prof["apply_static_mask"]:
         fmp = Path(prof["fixed_mask_path"])
@@ -683,27 +360,27 @@ def run_one_ptv_folder(ptv_sub: Path) -> None:
                 f"apply_static_mask=True pero no existe máscara fija para cam={cam}: {fmp}"
             )
 
-    write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, prof=prof)
+    write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, carbopol=carbopol, prof=prof)
 
-    print(f"\n[PIPE] === PTV folder: {ptv_sub.name} (cam={cam}) ===", flush=True)
-    print(f"[PIPE] cam profile: {prof}", flush=True)
+    print(f"\n[PIPE] === PTV: {ptv_sub.name} (cam={cam}, car={carbopol}) ===", flush=True)
 
-    print(f"[PIPE] PTV -> {RESULTS_PTV_ROOT / ptv_sub.name}", flush=True)
+    print(f"[PIPE] PTV -> {ptv_vars.RESULTS_PTV_ROOT / ptv_sub.name}", flush=True)
     run_env(ENV_YOLO, PTV_SCRIPT)
 
-    print(f"[OK] PTV listo: {ptv_sub.name}", flush=True)
+    print(f"[OK] PTV completado: {ptv_sub.name}\n", flush=True)
 
 
 # ============================================================
-# 5) MAIN
+# MAIN
 # ============================================================
 
 def main() -> None:
-    if RUN_MODE in ("piv", "both") and not PRE_BASE_DIR.exists():
-        raise FileNotFoundError(f"PRE_BASE_DIR no existe: {PRE_BASE_DIR}")
-
-    if RUN_MODE in ("piv", "both") and not MASK_MODEL.exists():
-        raise FileNotFoundError(f"MASK_MODEL no existe: {MASK_MODEL}")
+    # Validaciones iniciales
+    if RUN_MODE in ("piv", "both"):
+        if not piv_vars.PRE_BASE_DIR.exists():
+            raise FileNotFoundError(f"PRE_BASE_DIR no existe: {piv_vars.PRE_BASE_DIR}")
+        if not piv_vars.PIV_MODELS_DIR.exists():
+            raise FileNotFoundError(f"PIV_MODELS_DIR no existe: {piv_vars.PIV_MODELS_DIR}")
 
     if any(CAM_PROFILES[c]["apply_static_mask"] for c in CAM_PROFILES):
         if not FIX_MASKS_DIR.exists():
@@ -713,44 +390,42 @@ def main() -> None:
     ptv_folders: list[Path] = []
 
     if RUN_MODE in ("piv", "both"):
-        piv_folders = list_matching_subfolders(PRE_BASE_DIR, metodo=PIV_METODO)
+        piv_folders = list_matching_subfolders(piv_vars.PRE_BASE_DIR, metodo=piv_vars.PIV_METODO)
         if not piv_folders:
-            raise RuntimeError(f"No encontré carpetas PIV metodo={PIV_METODO} en {PRE_BASE_DIR}")
+            raise RuntimeError(f"No hay carpetas PIV con metodo={piv_vars.PIV_METODO}")
 
     if RUN_MODE in ("ptv", "both"):
-        ptv_folders = list_matching_subfolders(PTV_BASE_DIR, metodo=PTV_METODO)
+        ptv_folders = list_matching_subfolders(ptv_vars.PTV_BASE_DIR, metodo=ptv_vars.PTV_METODO)
         if RUN_MODE == "ptv" and not ptv_folders:
-            raise RuntimeError(f"No encontré carpetas PTV metodo={PTV_METODO} en {PTV_BASE_DIR}")
+            raise RuntimeError(f"No hay carpetas PTV con metodo={ptv_vars.PTV_METODO}")
         if RUN_MODE == "both" and not ptv_folders:
-            msg = f"[WARN] No encontré carpetas PTV metodo={PTV_METODO} en {PTV_BASE_DIR}"
+            msg = f"[WARN] No hay carpetas PTV con metodo={ptv_vars.PTV_METODO}"
             if ALLOW_BOTH_WITHOUT_PTV:
                 print(msg + " -> omitiendo PTV.", flush=True)
             else:
                 raise RuntimeError(msg)
 
+    # Ejecución
     if RUN_MODE == "piv":
-        print(f"[PIPE] PIV ONLY | folders={len(piv_folders)}", flush=True)
+        print(f"[PIPE] PIV ONLY | carpetas={len(piv_folders)}", flush=True)
         for f in piv_folders:
             run_one_piv_folder(f)
-        print("\n[OK] Pipeline PIV completo.", flush=True)
+        print("[OK] Pipeline PIV completo.", flush=True)
         return
 
     if RUN_MODE == "ptv":
-        print(f"[PIPE] PTV ONLY | folders={len(ptv_folders)}", flush=True)
+        print(f"[PIPE] PTV ONLY | carpetas={len(ptv_folders)}", flush=True)
         for f in ptv_folders:
             run_one_ptv_folder(f)
-        print("\n[OK] Pipeline PTV completo.", flush=True)
+        print("[OK] Pipeline PTV completo.", flush=True)
         return
 
-    print(f"[PIPE] BOTH | PIV folders={len(piv_folders)} | PTV folders={len(ptv_folders)}", flush=True)
-
+    print(f"[PIPE] BOTH | PIV={len(piv_folders)} | PTV={len(ptv_folders)}", flush=True)
     for f in piv_folders:
         run_one_piv_folder(f)
-
     for f in ptv_folders:
         run_one_ptv_folder(f)
-
-    print("\n[OK] Pipeline BOTH completo.", flush=True)
+    print("[OK] Pipeline BOTH completo.", flush=True)
 
 
 if __name__ == "__main__":
