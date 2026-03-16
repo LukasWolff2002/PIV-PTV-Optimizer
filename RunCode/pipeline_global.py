@@ -22,7 +22,7 @@ import variables_ptv as ptv_vars
 RUN_MODE = "piv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
-CONDA_BAT = r"C:\Users\MBX\anaconda3\condabin\conda.bat"
+CONDA_BAT = r"C:\Users\SarumanPM\anaconda3\condabin\conda.bat"
 ENV_YOLO = "yolov11"
 ENV_PIV = "piv"
 
@@ -76,7 +76,6 @@ CAM_PROFILES = {
         apply_static_mask=True,
     ),
 }
-
 
 # ============================================================
 # HELPERS
@@ -184,9 +183,23 @@ def write_cfg(
     piv_model_path = piv_model_path_for_cam(cam)
 
     # Preparar regiones temporales si están habilitadas
+    # Preparar regiones temporales si están habilitadas
     temporal_regions_config = None
     if piv_vars.USE_TEMPORAL_REGIONS:
+        # DEBUG: antes de llamar get_temporal_regions
+        print(f"\n[DEBUG write_cfg] Llamando get_temporal_regions(cam={cam}, carbopol={carbopol!r})", flush=True)
+        
         regions = piv_vars.get_temporal_regions(cam, carbopol)
+        
+        # DEBUG: ver qué retornó
+        print(f"[DEBUG write_cfg] get_temporal_regions retornó: {type(regions)}", flush=True)
+        if regions:
+            print(f"[DEBUG write_cfg] Cantidad de regiones: {len(regions)}", flush=True)
+            for i, r in enumerate(regions):
+                print(f"[DEBUG write_cfg]   Región {i+1}: {r.name}, end_time={r.end_time}, skip_inter={r.skip_inter}", flush=True)
+        else:
+            print(f"[DEBUG write_cfg] regions es None o vacía!", flush=True)
+        
         if regions:
             temporal_regions_config = [
                 {

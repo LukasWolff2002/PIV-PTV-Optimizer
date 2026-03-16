@@ -149,7 +149,7 @@ TEMPORAL_REGIONS_CAR02 = {
         TemporalRegion(
             name="alta_velocidad",
             start_time=0.0,
-            end_time=1.0,
+            end_time=2.0,
             block_size=11,
             skip_inter=0,
             skip_final=9,
@@ -157,8 +157,8 @@ TEMPORAL_REGIONS_CAR02 = {
         ),
         TemporalRegion(
             name="media_velocidad",
-            start_time=1.0,
-            end_time=3.0,
+            start_time=2.0,
+            end_time=4.0,
             block_size=11,
             skip_inter=1,
             skip_final=8,
@@ -166,11 +166,11 @@ TEMPORAL_REGIONS_CAR02 = {
         ),
         TemporalRegion(
             name="baja_velocidad",
-            start_time=3.0,
-            end_time=None,
+            start_time=4.0,
+            end_time=10.0,
             block_size=22,
-            skip_inter=2,
-            skip_final=18,
+            skip_inter=4,
+            skip_final=16,
             fps=220.0
         ),
     ],
@@ -270,7 +270,7 @@ TEMPORAL_REGIONS_CAR05 = {
         TemporalRegion(
             name="alta_velocidad",
             start_time=0.0,
-            end_time=2.0,
+            end_time=4.0,
             block_size=11,
             skip_inter=0,
             skip_final=9,
@@ -278,8 +278,8 @@ TEMPORAL_REGIONS_CAR05 = {
         ),
         TemporalRegion(
             name="media_velocidad",
-            start_time=2.0,
-            end_time=5.0,
+            start_time=4.0,
+            end_time=6.0,
             block_size=22,
             skip_inter=1,
             skip_final=19,
@@ -287,8 +287,8 @@ TEMPORAL_REGIONS_CAR05 = {
         ),
         TemporalRegion(
             name="baja_velocidad",
-            start_time=5.0,
-            end_time=None,
+            start_time=6.0,
+            end_time=10.0,
             block_size=33,
             skip_inter=3,
             skip_final=28,
@@ -355,6 +355,7 @@ TEMPORAL_REGIONS_CAR05 = {
     ],
 }
 
+
 # Función helper para obtener regiones según carbopol
 def get_temporal_regions(cam: int, carbopol: str) -> list[TemporalRegion] | None:
     """
@@ -362,14 +363,17 @@ def get_temporal_regions(cam: int, carbopol: str) -> list[TemporalRegion] | None
     
     Args:
         cam: Número de cámara (1-4)
-        carbopol: "02" o "05"
+        carbopol: "02", "2", "05", "5", etc.
     
     Returns:
         Lista de TemporalRegion o None si no existe configuración
     """
-    if carbopol == "02":
+    # Normalizar carbopol a formato "02" o "05"
+    carbopol_normalized = carbopol.zfill(2)  # Añade cero a la izquierda si es necesario
+    
+    if carbopol_normalized == "02":
         return TEMPORAL_REGIONS_CAR02.get(cam)
-    elif carbopol == "05":
+    elif carbopol_normalized == "05":
         return TEMPORAL_REGIONS_CAR05.get(cam)
     return None
 
