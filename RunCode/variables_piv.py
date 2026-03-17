@@ -111,7 +111,7 @@ TEMPORAL_REGIONS_CAR02 = {
         TemporalRegion(
             name="alta_velocidad",
             start_time=0.0,
-            end_time=2.0,
+            end_time=6.5,
             block_size=11,
             skip_inter=0,
             skip_final=9,
@@ -119,8 +119,8 @@ TEMPORAL_REGIONS_CAR02 = {
         ),
         TemporalRegion(
             name="media_velocidad",
-            start_time=2.0,
-            end_time=5.0,
+            start_time=6.5,
+            end_time=10.0,
             block_size=22,
             skip_inter=2,
             skip_final=18,
@@ -128,11 +128,11 @@ TEMPORAL_REGIONS_CAR02 = {
         ),
         TemporalRegion(
             name="baja_velocidad",
-            start_time=5.0,
-            end_time=10.0,
-            block_size=44,
+            start_time=10.0,
+            end_time=20.0,
+            block_size=22,
             skip_inter=8,
-            skip_final=34,
+            skip_final=12,
             fps=220.0
         ),
     ],
@@ -338,6 +338,87 @@ TEMPORAL_REGIONS_CAR05 = {
 }
 
 
+# ---------- PARÁMETROS PIV POR CÁMARA Y CARBOPOL ----------
+
+# Parámetros PIV para CARBOPOL 02
+PIV_PARAMS_CAR02 = {
+    1: {
+        'window_sizes': [128, 64, 32],
+        'overlaps': [64, 32, 16],
+        'keep_percentile': 95.0,
+    },
+    2: {
+        'window_sizes': [128, 64, 32],
+        'overlaps': [64, 32, 16],
+        'keep_percentile': 95.0,
+    },
+    3: {
+        'window_sizes': [128, 64, 32],
+        'overlaps': [64, 32, 16],
+        'keep_percentile': 95.0,
+    },
+    4: {
+        'window_sizes': [64, 32, 16],
+        'overlaps': [32, 16, 8],
+        'keep_percentile': 90.0,
+    },
+}
+
+# Parámetros PIV para CARBOPOL 05
+PIV_PARAMS_CAR05 = {
+    1: {
+        'window_sizes': [128, 64, 32],
+        'overlaps': [64, 32, 16],
+        'keep_percentile': 92.0,
+    },
+    2: {
+        'window_sizes': [128, 64, 32],
+        'overlaps': [64, 32, 16],
+        'keep_percentile': 92.0,
+    },
+    3: {
+        'window_sizes': [128, 64, 32],
+        'overlaps': [64, 32, 16],
+        'keep_percentile': 92.0,
+    },
+    4: {
+        'window_sizes': [64, 32, 16],
+        'overlaps': [32, 16, 8],
+        'keep_percentile': 88.0,
+    },
+}
+
+
+# Función helper para obtener parámetros PIV según cámara y carbopol
+def get_piv_params(cam: int, carbopol: str) -> dict:
+    """
+    Retorna los parámetros PIV para una cámara y tipo de carbopol.
+    
+    Args:
+        cam: Número de cámara (1-4)
+        carbopol: "02", "2", "05", "5", etc.
+    
+    Returns:
+        Dict con window_sizes, overlaps, keep_percentile
+    """
+    # Normalizar carbopol a formato "02" o "05"
+    carbopol_normalized = carbopol.zfill(2)
+    
+    # Valores por defecto
+    default_params = {
+        'window_sizes': [128, 64, 32],
+        'overlaps': [64, 32, 16],
+        'keep_percentile': 95.0,
+    }
+    
+    if carbopol_normalized == "02":
+        return PIV_PARAMS_CAR02.get(cam, default_params)
+    elif carbopol_normalized == "05":
+        return PIV_PARAMS_CAR05.get(cam, default_params)
+    
+    return default_params
+
+
 # Función helper para obtener regiones según carbopol
 def get_temporal_regions(cam: int, carbopol: str) -> list[TemporalRegion] | None:
     """
@@ -351,7 +432,7 @@ def get_temporal_regions(cam: int, carbopol: str) -> list[TemporalRegion] | None
         Lista de TemporalRegion o None si no existe configuración
     """
     # Normalizar carbopol a formato "02" o "05"
-    carbopol_normalized = carbopol.zfill(2)  # Añade cero a la izquierda si es necesario
+    carbopol_normalized = carbopol.zfill(2)
     
     if carbopol_normalized == "02":
         return TEMPORAL_REGIONS_CAR02.get(cam)
@@ -359,11 +440,17 @@ def get_temporal_regions(cam: int, carbopol: str) -> list[TemporalRegion] | None
         return TEMPORAL_REGIONS_CAR05.get(cam)
     return None
 
+
 # ---------- PARÁMETROS LEGACY (solo si USE_TEMPORAL_REGIONS = False) ----------
 BLOCKS = None  # None = todos los bloques posibles
 BLOCK_SIZE = 22
 SKIP_INTER = 0
 SKIP_FINAL = 20
+
+# ---------- PARÁMETROS PIV LEGACY (se sobrescriben con get_piv_params) ----------
+WINDOW_SIZES = [128, 64, 32, 16]  # Valores por defecto, se sobrescriben dinámicamente
+OVERLAPS = [64, 32, 16, 8]       # Valores por defecto, se sobrescriben dinámicamente
+KEEP_PERCENTILE = 95.0        # Valor por defecto, se sobrescribe dinámicamente
 
 # ---------- MÁSCARAS DINÁMICAS (YOLO) ----------
 MASK_CONF = 0.25
@@ -371,13 +458,10 @@ MASK_DEVICE = "0"
 INVERT_MASK = True
 DELETE_EXISTING_MASKS = True
 
-# ---------- PARÁMETROS PIV ----------
-WINDOW_SIZES = [128, 64, 32]
-OVERLAPS = [64, 32, 16]
+# ---------- PARÁMETROS PIV FIJOS ----------
 SEARCH_AREA_FACTOR = 1
 SIG2NOISE_METHOD = "peak2peak"
 MASK_THRESHOLD = 0.0
-KEEP_PERCENTILE = 95.0
 LM_KERNEL = 1
 LM_THRESH = 3.0
 LM_EPS = 0.1

@@ -124,54 +124,6 @@ def load_experiment_config() -> pd.DataFrame | None:
         return None
 
 
-def get_skip_images_for_folder(mezcla: str, toma: int, carbopol: str, cam: int) -> int:
-    """
-    Obtener número de imágenes a saltar para una toma específica
-    """
-    df = load_experiment_config()
-    if df is None:
-        return 0
-    
-    # Normalizar carbopol: "02" -> 0.2, "05" -> 0.5
-    carbopol_float = float(carbopol) / 10.0  # ← CORREGIDO: era /100.0
-    
-    # Normalizar mezcla para comparación
-    mezcla_normalized = mezcla.upper()
-    
-    # Filtrar fila correspondiente
-    mask = (
-        (df['Mezcla'].astype(str).str.upper() == mezcla_normalized) &
-        (df['Toma'] == toma) &
-        (df['Tipo'] == carbopol_float)
-    )
-    
-    matches = df[mask]
-    
-    if len(matches) == 0:
-        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}, usando skip=0", flush=True)
-        return 0
-    
-    row = matches.iloc[0]
-    
-    # Obtener "Fotos Saltar" (columna I)
-    skip_value = row.get('Fotos Saltar', 0)
-    if pd.isna(skip_value):
-        skip_value = 0
-    skip_base = int(skip_value)
-    
-    # Obtener "Razon FPS" (columna H)
-    fps_ratio_value = row.get('Razon FPS', 1.0)
-    fps_ratio = parse_fps_ratio(fps_ratio_value)
-    
-    # Si es cámara 4, multiplicar por ratio de FPS
-    if cam == 4:
-        skip_adjusted = int(skip_base * fps_ratio)
-        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base} × ratio={fps_ratio:.1f} = {skip_adjusted}", flush=True)
-        return skip_adjusted
-    else:
-        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base}", flush=True)
-        return skip_base
-    
 def parse_fps_ratio(ratio_str: str | float) -> float:
     """
     Parsear ratio de FPS desde string o número
@@ -211,6 +163,65 @@ def parse_fps_ratio(ratio_str: str | float) -> float:
     
     # Default
     return 1.0
+
+
+def get_skip_images_for_folder(mezcla: str, toma: int, carbopol: str, cam: int) -> int:
+    """
+    Obtener número de imágenes a saltar para una toma específica
+    
+    Args:
+        mezcla: código de mezcla (ej: "M72", "M84")
+        toma: número de toma (ej: 1, 2, 3)
+        carbopol: tipo de carbopol (ej: "02", "05")
+        cam: número de cámara (1-4)
+    
+    Returns:
+        Número de imágenes a saltar (default: 0)
+    """
+    df = load_experiment_config()
+    if df is None:
+        return 0
+    
+    # Normalizar carbopol: "02" -> 0.2, "05" -> 0.5
+    carbopol_float = float(carbopol) / 10.0
+    
+    # Normalizar mezcla para comparación
+    mezcla_normalized = mezcla.upper()
+    
+    # Filtrar fila correspondiente
+    mask = (
+        (df['Mezcla'].astype(str).str.upper() == mezcla_normalized) &
+        (df['Toma'] == toma) &
+        (df['Tipo'] == carbopol_float)
+    )
+    
+    matches = df[mask]
+    
+    if len(matches) == 0:
+        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}, usando skip=0", flush=True)
+        return 0
+    
+    row = matches.iloc[0]
+    
+    # Obtener "Fotos Saltar" (columna I)
+    skip_value = row.get('Fotos Saltar', 0)
+    if pd.isna(skip_value):
+        skip_value = 0
+    skip_base = int(skip_value)
+    
+    # Obtener "Razon FPS" (columna H)
+    fps_ratio_value = row.get('Razon FPS', 1.0)
+    fps_ratio = parse_fps_ratio(fps_ratio_value)
+    
+    # Si es cámara 4, multiplicar por ratio de FPS
+    if cam == 4:
+        skip_adjusted = int(skip_base * fps_ratio)
+        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base} × ratio={fps_ratio:.1f} = {skip_adjusted}", flush=True)
+        return skip_adjusted
+    else:
+        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base}", flush=True)
+        return skip_base
+
 
 # ============================================================
 # HELPERS
@@ -323,6 +334,9 @@ def write_cfg(
     # Selección automática del modelo PIV según cámara
     piv_model_path = piv_model_path_for_cam(cam)
 
+    # Obtener parámetros PIV según cámara y carbopol
+    piv_params = piv_vars.get_piv_params(cam, carbopol)
+
     # Preparar regiones temporales si están habilitadas
     temporal_regions_config = None
     if piv_vars.USE_TEMPORAL_REGIONS:
@@ -407,12 +421,12 @@ def write_cfg(
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
             "apply_static_mask": bool(prof["apply_static_mask"]),
             "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
-            "window_sizes": piv_vars.WINDOW_SIZES,
-            "overlaps": piv_vars.OVERLAPS,
+            "window_sizes": piv_params['window_sizes'],        # ← DINÁMICO
+            "overlaps": piv_params['overlaps'],                # ← DINÁMICO
             "search_area_factor": piv_vars.SEARCH_AREA_FACTOR,
             "sig2noise_method": piv_vars.SIG2NOISE_METHOD,
             "mask_threshold": piv_vars.MASK_THRESHOLD,
-            "keep_percentile": piv_vars.KEEP_PERCENTILE,
+            "keep_percentile": piv_params['keep_percentile'],  # ← DINÁMICO
             "lm_kernel": piv_vars.LM_KERNEL,
             "lm_thresh": piv_vars.LM_THRESH,
             "lm_eps": piv_vars.LM_EPS,
