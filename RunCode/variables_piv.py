@@ -140,7 +140,7 @@ TEMPORAL_REGIONS_CAR02 = {
         TemporalRegion(
             name="alta_velocidad",
             start_time=0.0,
-            end_time=2.0,
+            end_time=1.5,
             block_size=11,
             skip_inter=0,
             skip_final=9,
@@ -148,20 +148,29 @@ TEMPORAL_REGIONS_CAR02 = {
         ),
         TemporalRegion(
             name="media_velocidad",
-            start_time=2.0,
-            end_time=4.0,
-            block_size=11,
-            skip_inter=1,
-            skip_final=8,
+            start_time=1.5,
+            end_time=3.0,
+            block_size=22,
+            skip_inter=2,
+            skip_final=18,
             fps=220.0
         ),
         TemporalRegion(
             name="baja_velocidad",
-            start_time=4.0,
-            end_time=10.0,
+            start_time=3.0,
+            end_time=6.0,
             block_size=22,
             skip_inter=4,
             skip_final=16,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="muy_baja_velocidad",
+            start_time=6.0,
+            end_time=20.0,
+            block_size=22,
+            skip_inter=8,
+            skip_final=12,
             fps=220.0
         ),
     ],
