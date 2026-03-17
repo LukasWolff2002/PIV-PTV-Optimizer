@@ -222,7 +222,7 @@ TEMPORAL_REGIONS_CAR05 = {
         TemporalRegion(
             name="alta_velocidad",
             start_time=0.0,
-            end_time=3.0,
+            end_time=0.2,
             block_size=11,
             skip_inter=0,
             skip_final=9,
@@ -230,8 +230,8 @@ TEMPORAL_REGIONS_CAR05 = {
         ),
         TemporalRegion(
             name="media_velocidad",
-            start_time=3.0,
-            end_time=8.0,
+            start_time=0.2,
+            end_time=5.0,
             block_size=22,
             skip_inter=1,
             skip_final=19,
@@ -239,11 +239,29 @@ TEMPORAL_REGIONS_CAR05 = {
         ),
         TemporalRegion(
             name="baja_velocidad",
-            start_time=8.0,
-            end_time=10.0,
-            block_size=33,
+            start_time=5.0,
+            end_time=8.0,
+            block_size=22,
             skip_inter=2,
-            skip_final=29,
+            skip_final=18,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="muy_baja_velocidad",
+            start_time=8.0,
+            end_time=15.0,
+            block_size=22,
+            skip_inter=4,
+            skip_final=16,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="extrema_baja_velocidad",
+            start_time=15.0,
+            end_time=30.0,
+            block_size=44,
+            skip_inter=8,
+            skip_final=34,
             fps=220.0
         ),
         
@@ -367,9 +385,9 @@ PIV_PARAMS_CAR02 = {
 # Parámetros PIV para CARBOPOL 05
 PIV_PARAMS_CAR05 = {
     1: {
-        'window_sizes': [128, 64, 32],
-        'overlaps': [64, 32, 16],
-        'keep_percentile': 92.0,
+        'window_sizes': [64, 32, 16],
+        'overlaps': [32, 16, 8],
+        'keep_percentile': 90.0,
     },
     2: {
         'window_sizes': [128, 64, 32],
