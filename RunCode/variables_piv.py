@@ -122,23 +122,14 @@ TEMPORAL_REGIONS_CAR02 = {
             start_time=2.0,
             end_time=5.0,
             block_size=22,
-            skip_inter=1,
-            skip_final=19,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="baja_velocidad",
-            start_time=5.0,
-            end_time=20.0,
-            block_size=22,
             skip_inter=2,
             skip_final=18,
             fps=220.0
         ),
         TemporalRegion(
-            name="muy_baja_velocidad",
-            start_time=20.0,
-            end_time=50.0,
+            name="baja_velocidad",
+            start_time=5.0,
+            end_time=10.0,
             block_size=44,
             skip_inter=8,
             skip_final=34,
@@ -381,12 +372,12 @@ INVERT_MASK = True
 DELETE_EXISTING_MASKS = True
 
 # ---------- PARÁMETROS PIV ----------
-WINDOW_SIZES = [64, 32, 16]
-OVERLAPS = [32, 16, 8]
+WINDOW_SIZES = [128, 64, 32]
+OVERLAPS = [64, 32, 16]
 SEARCH_AREA_FACTOR = 1
 SIG2NOISE_METHOD = "peak2peak"
 MASK_THRESHOLD = 0.0
-KEEP_PERCENTILE = 90.0
+KEEP_PERCENTILE = 95.0
 LM_KERNEL = 1
 LM_THRESH = 3.0
 LM_EPS = 0.1
