@@ -315,30 +315,21 @@ TEMPORAL_REGIONS_CAR05 = {
     ],
     3: [
         TemporalRegion(
-            name="alta_velocidad",
+            name="sin_datos",
             start_time=0.0,
-            end_time=2.0,
-            block_size=11,
+            end_time=8.0,
+            block_size=220,
             skip_inter=0,
-            skip_final=9,
+            skip_final=218,
             fps=220.0
         ),
         TemporalRegion(
-            name="media_velocidad",
-            start_time=2.0,
-            end_time=5.0,
+            name="alta_velocidad",
+            start_time=8.0,
+            end_time=30.0,
             block_size=22,
-            skip_inter=1,
-            skip_final=19,
-            fps=220.0
-        ),
-        TemporalRegion(
-            name="baja_velocidad",
-            start_time=5.0,
-            end_time=None,
-            block_size=33,
-            skip_inter=3,
-            skip_final=28,
+            skip_inter=16,
+            skip_final=4,
             fps=220.0
         ),
     ],
@@ -346,28 +337,19 @@ TEMPORAL_REGIONS_CAR05 = {
         TemporalRegion(
             name="alta_velocidad",
             start_time=0.0,
-            end_time=1.5,
-            block_size=33,
+            end_time=3,
+            block_size=11,
             skip_inter=0,
-            skip_final=31,
+            skip_final=9,
             fps=660.0
         ),
         TemporalRegion(
             name="media_velocidad",
-            start_time=1.5,
-            end_time=4.0,
-            block_size=44,
-            skip_inter=1,
-            skip_final=41,
-            fps=660.0
-        ),
-        TemporalRegion(
-            name="baja_velocidad",
-            start_time=4.0,
-            end_time=None,
-            block_size=88,
-            skip_inter=3,
-            skip_final=83,
+            start_time=3,
+            end_time=6,
+            block_size=22,
+            skip_inter=2,
+            skip_final=18,
             fps=660.0
         ),
     ],
@@ -413,8 +395,8 @@ PIV_PARAMS_CAR05 = {
         'keep_percentile': 92.0,
     },
     3: {
-        'window_sizes': [128, 64, 32],
-        'overlaps': [64, 32, 16],
+        'window_sizes': [64, 32, 16],
+        'overlaps': [32, 16, 8],
         'keep_percentile': 92.0,
     },
     4: {
