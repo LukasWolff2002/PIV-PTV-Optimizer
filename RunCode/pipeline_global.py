@@ -4,6 +4,9 @@ import json
 import subprocess
 import re
 import sys
+import pandas as pd
+import requests
+from io import StringIO
 
 # ============================================================
 # PROJECT ROOT
@@ -22,7 +25,14 @@ import variables_ptv as ptv_vars
 RUN_MODE = "piv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
-CONDA_BAT = r"C:\Users\SarumanPM\anaconda3\condabin\conda.bat"
+# Posibles rutas de conda.bat
+CONDA_BAT_OPTIONS = [
+    Path(r"C:\Users\SarumanPM\anaconda3\condabin\conda.bat"),
+    Path(r"C:\Users\MBX\anaconda3\condabin\conda.bat"),
+]
+
+CONDA_BAT = next((str(p) for p in CONDA_BAT_OPTIONS if p.exists()), None)
+
 ENV_YOLO = "yolov11"
 ENV_PIV = "piv"
 
@@ -36,6 +46,10 @@ CFG_PATH = RUNCODE_DIR / "pipeline_config.json"
 
 # ---------- DIRECTORIO DE MÁSCARAS FIJAS (COMPARTIDO) ----------
 FIX_MASKS_DIR = PROJECT_ROOT / "FixMasks"
+
+# ---------- GOOGLE SHEETS CONFIG ----------
+# Reemplaza con tu URL pública de Google Sheets (Archivo → Compartir → Publicar en la web → CSV)
+GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQj9_M-1BdxtMDhG9u7j0qpO5WKN5tGZMe6lXdm-DZi-CIhwKY907aNLCLAXHppkda2AI5g2qX_p24S/pub?output=csv"
 
 # ---------- PERFILES POR CÁMARA (COMPARTIDO PIV/PTV) ----------
 CAM_PROFILES = {
@@ -76,6 +90,127 @@ CAM_PROFILES = {
         apply_static_mask=True,
     ),
 }
+
+
+# ============================================================
+# GOOGLE SHEETS INTEGRATION
+# ============================================================
+
+def load_experiment_config() -> pd.DataFrame | None:
+    """Cargar configuración de experimentos desde Google Sheets"""
+    try:
+        print(f"[INFO] Descargando Google Sheet...", flush=True)
+        
+        response = requests.get(GOOGLE_SHEET_CSV_URL, timeout=10)
+        response.raise_for_status()
+        
+        # Leer CSV
+        df = pd.read_csv(StringIO(response.text))
+        
+        # CONVERTIR COMAS A PUNTOS en columna 'Tipo'
+        if 'Tipo' in df.columns:
+            df['Tipo'] = df['Tipo'].astype(str).str.replace(',', '.').astype(float)
+        
+        # CONVERTIR COMAS A PUNTOS en columna 'Fotos Saltar'
+        if 'Fotos Saltar' in df.columns:
+            df['Fotos Saltar'] = df['Fotos Saltar'].astype(str).str.replace(',', '.', regex=False)
+            df['Fotos Saltar'] = pd.to_numeric(df['Fotos Saltar'], errors='coerce').fillna(0)
+        
+        print(f"[INFO] Google Sheet cargado: {len(df)} filas", flush=True)
+        return df
+    except Exception as e:
+        print(f"[WARN] No se pudo cargar Google Sheet: {e}", flush=True)
+        print(f"[WARN] Usando valores por defecto (skip=0)", flush=True)
+        return None
+
+
+def get_skip_images_for_folder(mezcla: str, toma: int, carbopol: str, cam: int) -> int:
+    """
+    Obtener número de imágenes a saltar para una toma específica
+    """
+    df = load_experiment_config()
+    if df is None:
+        return 0
+    
+    # Normalizar carbopol: "02" -> 0.2, "05" -> 0.5
+    carbopol_float = float(carbopol) / 10.0  # ← CORREGIDO: era /100.0
+    
+    # Normalizar mezcla para comparación
+    mezcla_normalized = mezcla.upper()
+    
+    # Filtrar fila correspondiente
+    mask = (
+        (df['Mezcla'].astype(str).str.upper() == mezcla_normalized) &
+        (df['Toma'] == toma) &
+        (df['Tipo'] == carbopol_float)
+    )
+    
+    matches = df[mask]
+    
+    if len(matches) == 0:
+        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}, usando skip=0", flush=True)
+        return 0
+    
+    row = matches.iloc[0]
+    
+    # Obtener "Fotos Saltar" (columna I)
+    skip_value = row.get('Fotos Saltar', 0)
+    if pd.isna(skip_value):
+        skip_value = 0
+    skip_base = int(skip_value)
+    
+    # Obtener "Razon FPS" (columna H)
+    fps_ratio_value = row.get('Razon FPS', 1.0)
+    fps_ratio = parse_fps_ratio(fps_ratio_value)
+    
+    # Si es cámara 4, multiplicar por ratio de FPS
+    if cam == 4:
+        skip_adjusted = int(skip_base * fps_ratio)
+        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base} × ratio={fps_ratio:.1f} = {skip_adjusted}", flush=True)
+        return skip_adjusted
+    else:
+        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base}", flush=True)
+        return skip_base
+    
+def parse_fps_ratio(ratio_str: str | float) -> float:
+    """
+    Parsear ratio de FPS desde string o número
+    
+    Args:
+        ratio_str: "1:3" o 3.0 o NaN
+    
+    Returns:
+        Factor multiplicador (ej: 3.0)
+    """
+    # Si es NaN o vacío, retornar 1.0
+    if pd.isna(ratio_str):
+        return 1.0
+    
+    # Si ya es número
+    if isinstance(ratio_str, (int, float)):
+        return float(ratio_str)
+    
+    # Si es string con formato "1:3"
+    ratio_str = str(ratio_str).strip()
+    if ':' in ratio_str:
+        parts = ratio_str.split(':')
+        if len(parts) == 2:
+            try:
+                numerator = float(parts[0])
+                denominator = float(parts[1])
+                if numerator != 0:
+                    return denominator / numerator
+            except ValueError:
+                pass
+    
+    # Si es string numérico directo
+    try:
+        return float(ratio_str)
+    except ValueError:
+        pass
+    
+    # Default
+    return 1.0
 
 # ============================================================
 # HELPERS
@@ -121,9 +256,9 @@ def piv_model_path_for_cam(cam: int) -> Path:
     return piv_vars.PIV_MODELS_DIR / f"cam{cam}-piv-yolo26.pt"
 
 
-def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict]:
+def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict, int]:
     """
-    Retorna (cam, carbopol, profile_dict)
+    Retorna (cam, carbopol, profile_dict, skip_first_images)
     """
     info = parse_subfolder_name(folder.name)
     if info is None:
@@ -131,6 +266,11 @@ def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict]:
 
     cam = int(info["cam"])
     carbopol = info["car"]  # "02" o "05"
+    mezcla = f"M{info['mezcla']}"
+    toma = int(info["toma"])
+
+    # Obtener skip_images desde Google Sheet
+    skip_images = get_skip_images_for_folder(mezcla, toma, carbopol, cam)
 
     if cam not in CAM_PROFILES:
         raise RuntimeError(f"No hay perfil definido para cam={cam}")
@@ -138,7 +278,7 @@ def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict]:
     prof = dict(CAM_PROFILES[cam])
     prof["fixed_mask_path"] = str(fixed_mask_path_for_cam(cam))
 
-    return cam, carbopol, prof
+    return cam, carbopol, prof, skip_images
 
 
 def run_env(env: str, script: Path) -> None:
@@ -166,7 +306,8 @@ def write_cfg(
     ptv_sub: Path | None,
     cam: int,
     carbopol: str,
-    prof: dict
+    prof: dict,
+    skip_first_images: int
 ) -> None:
     pre_info = parse_subfolder_name(pre_sub.name) if pre_sub else None
     ptv_info = parse_subfolder_name(ptv_sub.name) if ptv_sub else None
@@ -183,22 +324,9 @@ def write_cfg(
     piv_model_path = piv_model_path_for_cam(cam)
 
     # Preparar regiones temporales si están habilitadas
-    # Preparar regiones temporales si están habilitadas
     temporal_regions_config = None
     if piv_vars.USE_TEMPORAL_REGIONS:
-        # DEBUG: antes de llamar get_temporal_regions
-        print(f"\n[DEBUG write_cfg] Llamando get_temporal_regions(cam={cam}, carbopol={carbopol!r})", flush=True)
-        
         regions = piv_vars.get_temporal_regions(cam, carbopol)
-        
-        # DEBUG: ver qué retornó
-        print(f"[DEBUG write_cfg] get_temporal_regions retornó: {type(regions)}", flush=True)
-        if regions:
-            print(f"[DEBUG write_cfg] Cantidad de regiones: {len(regions)}", flush=True)
-            for i, r in enumerate(regions):
-                print(f"[DEBUG write_cfg]   Región {i+1}: {r.name}, end_time={r.end_time}, skip_inter={r.skip_inter}", flush=True)
-        else:
-            print(f"[DEBUG write_cfg] regions es None o vacía!", flush=True)
         
         if regions:
             temporal_regions_config = [
@@ -220,6 +348,7 @@ def write_cfg(
         "meta": {
             "cam": cam,
             "carbopol": carbopol,
+            "skip_first_images": skip_first_images,
             "cam_profile": prof,
             "pre_subfolder": pre_sub.name if pre_sub else None,
             "ptv_subfolder": ptv_sub.name if ptv_sub else None,
@@ -247,6 +376,7 @@ def write_cfg(
             "block_size": piv_vars.BLOCK_SIZE,
             "skip_inter": piv_vars.SKIP_INTER,
             "skip_final": piv_vars.SKIP_FINAL,
+            "skip_first_images": skip_first_images,
             "delete_existing": piv_vars.DELETE_EXISTING_PRE,
             "preprocess_params": preprocess_params,
             "use_temporal_regions": piv_vars.USE_TEMPORAL_REGIONS and temporal_regions_config is not None,
@@ -331,7 +461,7 @@ def write_cfg(
 # ============================================================
 
 def run_one_piv_folder(pre_sub: Path) -> None:
-    cam, carbopol, prof = cam_profile_for_folder(pre_sub)
+    cam, carbopol, prof, skip_images = cam_profile_for_folder(pre_sub)
 
     # Validar máscara estática
     if prof["apply_static_mask"]:
@@ -346,9 +476,9 @@ def run_one_piv_folder(pre_sub: Path) -> None:
     if not piv_model.exists():
         raise FileNotFoundError(f"No existe modelo PIV para cam={cam}: {piv_model}")
 
-    write_cfg(pre_sub=pre_sub, ptv_sub=None, cam=cam, carbopol=carbopol, prof=prof)
+    write_cfg(pre_sub=pre_sub, ptv_sub=None, cam=cam, carbopol=carbopol, prof=prof, skip_first_images=skip_images)
 
-    print(f"\n[PIPE] === PIV: {pre_sub.name} (cam={cam}, car={carbopol}) ===", flush=True)
+    print(f"\n[PIPE] === PIV: {pre_sub.name} (cam={cam}, car={carbopol}, skip={skip_images}) ===", flush=True)
     print(f"[PIPE] Modelo: {piv_model.name}", flush=True)
 
     print("[PIPE] 1) PRE + MASKS", flush=True)
@@ -364,7 +494,7 @@ def run_one_piv_folder(pre_sub: Path) -> None:
 
 
 def run_one_ptv_folder(ptv_sub: Path) -> None:
-    cam, carbopol, prof = cam_profile_for_folder(ptv_sub)
+    cam, carbopol, prof, _ = cam_profile_for_folder(ptv_sub)
 
     if prof["apply_static_mask"]:
         fmp = Path(prof["fixed_mask_path"])
@@ -373,7 +503,7 @@ def run_one_ptv_folder(ptv_sub: Path) -> None:
                 f"apply_static_mask=True pero no existe máscara fija para cam={cam}: {fmp}"
             )
 
-    write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, carbopol=carbopol, prof=prof)
+    write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, carbopol=carbopol, prof=prof, skip_first_images=0)
 
     print(f"\n[PIPE] === PTV: {ptv_sub.name} (cam={cam}, car={carbopol}) ===", flush=True)
 

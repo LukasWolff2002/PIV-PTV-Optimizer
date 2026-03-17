@@ -6,9 +6,9 @@ Muestreo por bloques con preprocesamiento opcional de imágenes PIV
 
 from __future__ import annotations
 from pathlib import Path
-from dataclasses import dataclass  # ← AGREGADO: faltaba este import
+from dataclasses import dataclass
 from typing import List, Optional, Dict
-import os, re, shutil, json  # ← AGREGADO: json al final
+import os, re, shutil, json
 
 # Importar funciones de preprocesamiento
 try:
@@ -42,6 +42,11 @@ except ImportError:
 def natural_key(s: str):
     """Clave de ordenamiento natural (números ordenados correctamente)"""
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
+
+
+def _natural_sort_key(path: Path) -> List:
+    """Natural sort key para Path objects"""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', str(path.name))]
 
 
 def list_sorted_files(folder: Path, natural_sort: bool) -> List[Path]:
@@ -85,7 +90,8 @@ def run_adaptive_block_sampling(
     input_dir: Path,
     output_dir: Path,
     regions: List['TemporalRegion'],
-    delete_existing: bool,
+    skip_first_images: int = 0,  # ← NUEVO PARÁMETRO
+    delete_existing: bool = True,
     natural_sort: bool = True,
     overwrite: bool = True,
     preprocess_params: Optional[Dict] = None,
@@ -101,6 +107,7 @@ def run_adaptive_block_sampling(
         input_dir: directorio con imágenes originales
         output_dir: directorio de salida
         regions: lista de TemporalRegion con parámetros por región
+        skip_first_images: número de imágenes a saltar al inicio (default: 0)
         delete_existing: eliminar directorio de salida si existe
         natural_sort: ordenamiento natural de archivos
         overwrite: sobrescribir archivos existentes
@@ -129,8 +136,15 @@ def run_adaptive_block_sampling(
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Listar y ordenar archivos
-    files = list_sorted_files(input_dir, natural_sort)
-    total_files = len(files)
+    all_images = sorted(input_dir.glob("*.tif*"), key=_natural_sort_key if natural_sort else lambda p: p.name)
+    
+    # ← NUEVO: Saltar las primeras N imágenes si se especifica
+    if skip_first_images > 0:
+        print(f"\n[INFO] Saltando las primeras {skip_first_images} imágenes", flush=True)
+        all_images = all_images[skip_first_images:]
+        print(f"[INFO] Imágenes restantes: {len(all_images)}", flush=True)
+    
+    total_files = len(all_images)
     
     if total_files == 0:
         raise RuntimeError(f"No hay archivos en: {input_dir}")
@@ -186,11 +200,10 @@ def run_adaptive_block_sampling(
             img2_filename = None
             
             for img_order, global_idx in enumerate([idx1, idx2], start=1):
-                src = files[global_idx]
+                src = all_images[global_idx]  # ← CAMBIADO: usar all_images en vez de files
                 
                 # Generar nombre con metadata de región
-                # Formato: {original_stem}_r{region}b{block}s{skip}{ext}
-                stem = src.stem
+                # Formato: frame_{idx}_r{region}b{block}s{skip}{ext}
                 ext = src.suffix
                 new_name = f"frame_{global_idx:05d}_r{region_idx+1}b{block_idx+1:03d}s{region.skip_inter}{ext}"
                 dst = output_dir / new_name
@@ -230,7 +243,7 @@ def run_adaptive_block_sampling(
                 
                 region_images += 1
             
-            # Guardar metadata del par (usando la clase importada de temporal_regions)
+            # Guardar metadata del par
             metadata_list.append(BlockMetadata(
                 region_idx=region_idx,
                 region_name=region.name,
@@ -298,7 +311,8 @@ def run_block_sampling(
     block_size: int,
     skip_inter: int,
     skip_final: int,
-    delete_existing: bool,
+    skip_first_images: int = 0,  # ← NUEVO PARÁMETRO
+    delete_existing: bool = True,
     natural_sort: bool = True,
     overwrite: bool = True,
     preprocess_params: Optional[Dict] = None,
@@ -313,20 +327,14 @@ def run_block_sampling(
         block_size: tamaño de cada bloque
         skip_inter: número de imágenes a saltar entre las 2 seleccionadas del bloque
         skip_final: número de imágenes a saltar al final de cada bloque
+        skip_first_images: número de imágenes a saltar al inicio (default: 0)
         delete_existing: eliminar directorio de salida si existe
         natural_sort: ordenamiento natural de archivos
         overwrite: sobrescribir archivos existentes
         preprocess_params: diccionario con parámetros de preprocesamiento PIV
-                          Si es None, hace copia directa (sin preprocesamiento)
     
     Regla de bloque:
         2 (imágenes seleccionadas) + skip_inter + skip_final = block_size
-    
-    Ejemplo con block_size=22, skip_inter=1, skip_final=19:
-        - Imagen 1: índice i
-        - Imagen 2: índice i+2 (salta 1 imagen intermedia)
-        - Salto final: 19 imágenes
-        - Total: 2 + 1 + 19 = 22
     """
     # Validaciones
     if not input_dir.is_dir():
@@ -341,6 +349,13 @@ def run_block_sampling(
 
     # Listar y ordenar archivos
     files = list_sorted_files(input_dir, natural_sort)
+    
+    # ← NUEVO: Saltar las primeras N imágenes si se especifica
+    if skip_first_images > 0:
+        print(f"\n[INFO] Saltando las primeras {skip_first_images} imágenes", flush=True)
+        files = files[skip_first_images:]
+        print(f"[INFO] Imágenes restantes: {len(files)}", flush=True)
+    
     total = len(files)
     
     if total == 0:
@@ -386,28 +401,17 @@ def run_block_sampling(
             # PREPROCESAMIENTO O COPIA DIRECTA
             if apply_preprocess:
                 try:
-                    # 1) Detectar bit depth original
                     bit_depth_original = obtener_bit_depth_original(src)
-
-                    # 2) Cargar imagen original normalizada a [0,1]
                     img = load_image(src)
-
-                    # 3) Aplicar preprocesamiento
                     img_procesada = apply_preprocessing(img, preprocess_params)
-
-                    # 4) Guardar como PNG manteniendo bit depth original
                     save_image(img_procesada, dst, bit_depth=bit_depth_original)
-
                 except Exception as e:
                     print(f"[ERROR] Fallo preprocesamiento en {src.name}: {e}")
-
             else:
                 try:
-                    # Si no hay preprocesamiento, igual convertir a PNG
                     bit_depth_original = obtener_bit_depth_original(src)
                     img = load_image(src)
                     save_image(img, dst, bit_depth=bit_depth_original)
-
                 except Exception as e:
                     print(f"[ERROR] Fallo conversión en {src.name}: {e}")
 
@@ -425,15 +429,7 @@ def run_block_sampling(
 # ============================================================================
 
 def validate_preprocess_params(params: Optional[Dict]) -> bool:
-    """
-    Validar que el diccionario de parámetros tenga las claves esperadas
-    
-    Args:
-        params: diccionario a validar
-    
-    Returns:
-        True si es válido o None, False si falta alguna clave
-    """
+    """Validar que el diccionario de parámetros tenga las claves esperadas"""
     if params is None:
         return True
     
@@ -450,34 +446,3 @@ def validate_preprocess_params(params: Optional[Dict]) -> bool:
         return False
     
     return True
-
-
-# ============================================================================
-# EJEMPLO DE USO (para testing)
-# ============================================================================
-
-if __name__ == "__main__":
-    # Ejemplo de parámetros de preprocesamiento
-    example_params = {
-        'roi_enabled': False,
-        'roi_x': 0,
-        'roi_y': 0,
-        'roi_width': 100,
-        'roi_height': 100,
-        'clahe_enabled': True,
-        'clahe_tile_size': 50,
-        'clahe_clip_limit': 0.01,
-        'intensity_capping': False,
-        'capping_n_std': 2.0,
-        'highpass_enabled': False,
-        'highpass_size': 15,
-        'wiener_enabled': False,
-        'wiener_size': 3,
-        'gaussian_size': 3,
-        'min_intensity': 0.0,
-        'max_intensity': 1.0,
-    }
-    
-    # Validar parámetros
-    if validate_preprocess_params(example_params):
-        print("✓ Parámetros válidos")

@@ -55,6 +55,7 @@ def main() -> None:
             input_dir=Path(pre["input_subdir"]),
             output_dir=Path(pre["dest_out_dir"]),
             regions=regions,
+            skip_first_images=int(pre.get("skip_first_images", 0)),  # ← AGREGAR ESTA LÍNEA
             delete_existing=bool(pre["delete_existing"]),
             natural_sort=True,
             overwrite=True,
@@ -79,6 +80,7 @@ def main() -> None:
             block_size=int(pre["block_size"]),
             skip_inter=int(pre["skip_inter"]),
             skip_final=int(pre["skip_final"]),
+            skip_first_images=int(pre.get("skip_first_images", 0)),  # ← AGREGAR ESTA LÍNEA
             delete_existing=bool(pre["delete_existing"]),
             natural_sort=True,
             overwrite=True,

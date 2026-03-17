@@ -176,30 +176,21 @@ TEMPORAL_REGIONS_CAR02 = {
     ],
     3: [
         TemporalRegion(
-            name="alta_velocidad",
-            start_time=0.0,
-            end_time=1.0,
-            block_size=11,
-            skip_inter=0,
-            skip_final=9,
-            fps=220.0
-        ),
-        TemporalRegion(
             name="media_velocidad",
-            start_time=1.0,
-            end_time=3.0,
-            block_size=11,
-            skip_inter=1,
-            skip_final=8,
+            start_time=0.0,
+            end_time=2.0,
+            block_size=22,
+            skip_inter=2,
+            skip_final=18,
             fps=220.0
         ),
         TemporalRegion(
             name="baja_velocidad",
-            start_time=3.0,
-            end_time=None,
+            start_time=2.0,
+            end_time=10.0,
             block_size=22,
-            skip_inter=2,
-            skip_final=18,
+            skip_inter=4,
+            skip_final=16,
             fps=220.0
         ),
     ],
@@ -395,7 +386,7 @@ OVERLAPS = [32, 16, 8]
 SEARCH_AREA_FACTOR = 1
 SIG2NOISE_METHOD = "peak2peak"
 MASK_THRESHOLD = 0.0
-KEEP_PERCENTILE = 80.0
+KEEP_PERCENTILE = 90.0
 LM_KERNEL = 1
 LM_THRESH = 3.0
 LM_EPS = 0.1
