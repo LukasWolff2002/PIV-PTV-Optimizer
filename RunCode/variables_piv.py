@@ -176,9 +176,18 @@ TEMPORAL_REGIONS_CAR02 = {
     ],
     3: [
         TemporalRegion(
-            name="media_velocidad",
+            name="alta_velocidad",
             start_time=0.0,
             end_time=2.0,
+            block_size=11,
+            skip_inter=0,
+            skip_final=9,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="media_velocidad",
+            start_time=2.0,
+            end_time=5.0,
             block_size=22,
             skip_inter=2,
             skip_final=18,
@@ -186,11 +195,20 @@ TEMPORAL_REGIONS_CAR02 = {
         ),
         TemporalRegion(
             name="baja_velocidad",
-            start_time=2.0,
-            end_time=10.0,
+            start_time=5.0,
+            end_time=7.0,
             block_size=22,
             skip_inter=4,
             skip_final=16,
+            fps=220.0
+        ),
+        TemporalRegion(
+            name="muy_baja_velocidad",
+            start_time=7.0,
+            end_time=20.0,
+            block_size=22,
+            skip_inter=8,
+            skip_final=12,
             fps=220.0
         ),
     ],
@@ -371,9 +389,9 @@ PIV_PARAMS_CAR02 = {
         'keep_percentile': 95.0,
     },
     3: {
-        'window_sizes': [128, 64, 32],
-        'overlaps': [64, 32, 16],
-        'keep_percentile': 95.0,
+        'window_sizes': [64, 32, 16],
+        'overlaps': [32, 16, 8],
+        'keep_percentile': 85.0,
     },
     4: {
         'window_sizes': [64, 32, 16],
