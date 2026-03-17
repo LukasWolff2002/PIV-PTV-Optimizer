@@ -176,6 +176,7 @@ def process_one_image(
     fixed_mask_path: Optional[Path],
     fixed_mask_threshold: int,
     resize_fixed_mask_if_needed: bool,
+    imgsz: int,
 ) -> None:
     with Image.open(img_path) as im:
         im.load()
@@ -191,7 +192,7 @@ def process_one_image(
         arr3 = prepare_for_model(gray)
         results = model.predict(
             source=arr3,
-            imgsz=1024,
+            imgsz=imgsz,
             conf=conf_thresh,
             device=device,
             verbose=False,
@@ -245,6 +246,7 @@ def run_masks_yolo(
     fixed_mask_path: Optional[Path] = None,
     fixed_mask_threshold: int = 127,
     resize_fixed_mask_if_needed: bool = True,
+    imgsz: int = 1024,
 ) -> None:
     if not images_dir.is_dir():
         raise FileNotFoundError(f"No existe images_dir: {images_dir}")
@@ -284,6 +286,7 @@ def run_masks_yolo(
             fixed_mask_path=fixed_mask_path,
             fixed_mask_threshold=fixed_mask_threshold,
             resize_fixed_mask_if_needed=resize_fixed_mask_if_needed,
+            imgsz=imgsz,
         )
 
     print(f"[MASKS] listo: {output_dir} ({len(files)} imgs) | dyn={apply_dynamic_mask} static={apply_static_mask}")

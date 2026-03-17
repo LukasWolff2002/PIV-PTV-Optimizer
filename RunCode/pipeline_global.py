@@ -84,8 +84,8 @@ CAM_PROFILES = {
         fps=660,
         dt_ms=1000 * (1 / 660),
         px_per_mm=10.7,
-        width_px=380,
-        height_px=380,
+        width_px=384,
+        height_px=384,
         apply_dynamic_mask=True,
         apply_static_mask=True,
     ),
@@ -408,6 +408,7 @@ def write_cfg(
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
             "apply_static_mask": bool(prof["apply_static_mask"]),
             "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
+            "imgsz": int(prof["width_px"]),   # ← AGREGAR
         },
 
         "piv": {

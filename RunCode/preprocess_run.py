@@ -109,6 +109,7 @@ def main() -> None:
         fixed_mask_path=fixed_path,
         fixed_mask_threshold=int(masks.get("fixed_mask_threshold", 127)),
         resize_fixed_mask_if_needed=bool(masks.get("resize_fixed_mask_if_needed", True)),
+        imgsz=int(masks.get("imgsz", 1024)),   # ← AGREGAR
     )
 
     print("[OK] preprocess_run listo.")
