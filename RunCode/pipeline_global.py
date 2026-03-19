@@ -96,6 +96,62 @@ CAM_PROFILES = {
 # GOOGLE SHEETS INTEGRATION
 # ============================================================
 
+def should_process_folder(mezcla: str, toma: int, carbopol: str) -> bool:
+    """
+    Verificar si una toma debe ser procesada según Google Sheets
+    
+    Args:
+        mezcla: código de mezcla (ej: "M72", "M84")
+        toma: número de toma (ej: 1, 2, 3)
+        carbopol: tipo de carbopol (ej: "02", "05")
+    
+    Returns:
+        True si debe procesarse, False si debe saltarse
+    """
+    df = load_experiment_config()
+    if df is None:
+        # Si no se puede cargar el sheet, procesar por defecto
+        print(f"[WARN] No se pudo cargar Google Sheet, procesando por defecto", flush=True)
+        return True
+    
+    # Normalizar carbopol: "02" -> 0.2, "05" -> 0.5
+    carbopol_float = float(carbopol) / 10.0
+    
+    # Normalizar mezcla para comparación
+    mezcla_normalized = mezcla.upper()
+    
+    # Filtrar fila correspondiente
+    mask = (
+        (df['Mezcla'].astype(str).str.upper() == mezcla_normalized) &
+        (df['Toma'] == toma) &
+        (df['Tipo'] == carbopol_float)
+    )
+    
+    matches = df[mask]
+    
+    if len(matches) == 0:
+        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}, procesando por defecto", flush=True)
+        return True
+    
+    row = matches.iloc[0]
+    
+    # Obtener columna "Usar" (columna J)
+    usar_value = row.get('Usar', 'si')
+    
+    # Normalizar valor (manejar "Si", "SI", "sí", etc.)
+    if pd.isna(usar_value):
+        usar_value = 'si'
+    
+    usar_normalized = str(usar_value).strip().lower()
+    
+    # Retornar True solo si es "si" o "sí"
+    should_use = usar_normalized in ['si', 'sí', 's', 'yes', 'y']
+    
+    if not should_use:
+        print(f"[SKIP] {mezcla}-Toma{toma}-Car{carbopol}: Usar={usar_value} → SALTANDO", flush=True)
+    
+    return should_use
+
 def load_experiment_config() -> pd.DataFrame | None:
     """Cargar configuración de experimentos desde Google Sheets"""
     try:
@@ -477,6 +533,16 @@ def write_cfg(
 
 def run_one_piv_folder(pre_sub: Path) -> None:
     cam, carbopol, prof, skip_images = cam_profile_for_folder(pre_sub)
+    
+    # **NUEVO: Verificar si debe procesarse**
+    info = parse_subfolder_name(pre_sub.name)
+    if info:
+        mezcla = f"M{info['mezcla']}"
+        toma = int(info['toma'])
+        
+        if not should_process_folder(mezcla, toma, carbopol):
+            print(f"[SKIP] Carpeta omitida: {pre_sub.name}", flush=True)
+            return  # ← Salir sin procesar
 
     # Validar máscara estática
     if prof["apply_static_mask"]:
@@ -510,6 +576,16 @@ def run_one_piv_folder(pre_sub: Path) -> None:
 
 def run_one_ptv_folder(ptv_sub: Path) -> None:
     cam, carbopol, prof, _ = cam_profile_for_folder(ptv_sub)
+    
+    # **NUEVO: Verificar si debe procesarse**
+    info = parse_subfolder_name(ptv_sub.name)
+    if info:
+        mezcla = f"M{info['mezcla']}"
+        toma = int(info['toma'])
+        
+        if not should_process_folder(mezcla, toma, carbopol):
+            print(f"[SKIP] Carpeta omitida: {ptv_sub.name}", flush=True)
+            return  # ← Salir sin procesar
 
     if prof["apply_static_mask"]:
         fmp = Path(prof["fixed_mask_path"])
