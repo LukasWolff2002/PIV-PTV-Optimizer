@@ -13,11 +13,12 @@ PTV_BASE_DIR = PROJECT_ROOT / "PTV" / "Tomas"
 RESULTS_PTV_ROOT = PROJECT_ROOT / "ResultadosPTV"
 RUNS_SEGMENT_DIR = PROJECT_ROOT / "runs" / "segment"
 
-# ---------- FILTRO PARA SELECCIONAR CARPETAS ----------
+# ---------- FILTRO PARA SELECCIONAR   CARPETAS ----------
 PTV_METODO = "ptv"  # Filtra carpetas que terminen en "-ptv"
 
 # ---------- PREPROCESAMIENTO PTV ----------
 # Parámetros de preprocesamiento por cámara (NO MODIFICAR FRECUENTEMENTE)
+
 CAM_PREPROCESS_PARAMS_PTV = {
     'cam1': {
         'roi_enabled': False,
@@ -29,14 +30,14 @@ CAM_PREPROCESS_PARAMS_PTV = {
         'clahe_tile_size': 175,
         'clahe_clip_limit': 0.1000,
         'intensity_capping': True,
-        'capping_n_std': 3.1053,
+        'capping_n_std': 1.4737,
         'highpass_enabled': False,
         'highpass_size': 28,
         'wiener_enabled': False,
         'wiener_size': 3,
         'gaussian_size': 3,
-        'min_intensity': 0.1579,
-        'max_intensity': 0.7368,
+        'min_intensity': 0.1316,
+        'max_intensity': 0.6447,
     },
     'cam2': {
         'roi_enabled': False,
@@ -67,13 +68,13 @@ CAM_PREPROCESS_PARAMS_PTV = {
         'clahe_tile_size': 159,
         'clahe_clip_limit': 0.1000,
         'intensity_capping': True,
-        'capping_n_std': 1.9474,
+        'capping_n_std': 5.0000,
         'highpass_enabled': False,
         'highpass_size': 15,
         'wiener_enabled': False,
         'wiener_size': 3,
         'gaussian_size': 3,
-        'min_intensity': 0.1053,
+        'min_intensity': 0.1184,
         'max_intensity': 0.7763,
     },
     'cam4': {
@@ -96,7 +97,6 @@ CAM_PREPROCESS_PARAMS_PTV = {
         'max_intensity': 0.8289,
     },
 }
-
 # ---------- MODELO YOLO TRACKING ----------
 YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
 
@@ -108,7 +108,7 @@ GAMMA = 0.05
 GATE_X = 10
 GATE_Y = 10
 GATE_ANGLE = 5
-CONF_TRACK = 0.25
+CONF_TRACK = 0.1
 MIN_FRAMES_KEEP = 20
 ANNOTATE = True
 

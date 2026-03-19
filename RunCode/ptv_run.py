@@ -801,6 +801,634 @@ def annotate_frame(
 
 
 # ============================================================
+# INTERACTIVE VISUALIZER
+# ============================================================
+
+def create_interactive_visualizer(
+    ann_dir: Path,
+    tracks: list[Track],
+    out_path: Path,
+    width_px: int,
+    height_px: int,
+    fps: float,
+) -> None:
+    """
+    Crea un visualizador HTML interactivo con slider temporal.
+    Muestra imagen base + anotaciones + trayectorias de tracks.
+    """
+    import base64
+    
+    # Recopilar todas las imágenes anotadas
+    ann_images = sorted(ann_dir.glob("*.png"), key=lambda p: natural_key(p.name))
+    if not ann_images:
+        print("[WARN] No se encontraron imágenes anotadas para el visualizador", flush=True)
+        return
+    
+    print(f"[PTV] Generando visualizador con {len(ann_images)} frames...", flush=True)
+    
+    # Convertir imágenes a base64
+    frames_data = []
+    for img_path in ann_images:
+        img = cv2.imread(str(img_path))
+        if img is None:
+            continue
+        _, buffer = cv2.imencode('.png', img)
+        img_b64 = base64.b64encode(buffer).decode('utf-8')
+        frames_data.append({
+            'name': img_path.stem,
+            'data': f'data:image/png;base64,{img_b64}'
+        })
+    
+    # Preparar datos de tracks para cada frame
+    tracks_by_frame = {}
+    for track in tracks:
+        for rec in track.history:
+            frame_idx = rec.frame_idx
+            if frame_idx not in tracks_by_frame:
+                tracks_by_frame[frame_idx] = []
+            
+            # Historial completo del track hasta este frame
+            history_points = [
+                {'x': r.x, 'y': r.y} 
+                for r in track.history 
+                if r.frame_idx <= frame_idx
+            ]
+            
+            tracks_by_frame[frame_idx].append({
+                'track_id': track.track_id,
+                'x': rec.x,
+                'y': rec.y,
+                'vx': rec.vx,
+                'vy': rec.vy,
+                'angle_deg': rec.angle_deg,
+                'history': history_points
+            })
+    
+    # Crear HTML
+    html_content = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTV Tracking Visualizer</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }}
+        
+        #header {{
+            background: #2d2d2d;
+            padding: 15px 20px;
+            border-bottom: 2px solid #404040;
+        }}
+        
+        h1 {{
+            font-size: 20px;
+            font-weight: 600;
+            color: #00d4ff;
+        }}
+        
+        #main-container {{
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }}
+        
+        #canvas-container {{
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0a0a0a;
+            position: relative;
+        }}
+        
+        canvas {{
+            max-width: 100%;
+            max-height: 100%;
+            border: 1px solid #404040;
+        }}
+        
+        #sidebar {{
+            width: 300px;
+            background: #2d2d2d;
+            border-left: 1px solid #404040;
+            padding: 20px;
+            overflow-y: auto;
+        }}
+        
+        #controls {{
+            background: #2d2d2d;
+            padding: 20px;
+            border-top: 1px solid #404040;
+        }}
+        
+        .control-group {{
+            margin-bottom: 20px;
+        }}
+        
+        label {{
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #b0b0b0;
+        }}
+        
+        input[type="range"] {{
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #404040;
+            outline: none;
+            -webkit-appearance: none;
+        }}
+        
+        input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #00d4ff;
+            cursor: pointer;
+        }}
+        
+        input[type="range"]::-moz-range-thumb {{
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #00d4ff;
+            cursor: pointer;
+            border: none;
+        }}
+        
+        .frame-info {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 8px;
+            font-size: 14px;
+        }}
+        
+        .frame-number {{
+            font-weight: 600;
+            color: #00d4ff;
+        }}
+        
+        .play-controls {{
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }}
+        
+        button {{
+            flex: 1;
+            padding: 10px;
+            background: #404040;
+            border: none;
+            border-radius: 5px;
+            color: #e0e0e0;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }}
+        
+        button:hover {{
+            background: #505050;
+        }}
+        
+        button:active {{
+            background: #353535;
+        }}
+        
+        button.active {{
+            background: #00d4ff;
+            color: #1a1a1a;
+        }}
+        
+        .checkbox-group {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 15px;
+        }}
+        
+        input[type="checkbox"] {{
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }}
+        
+        .stats {{
+            margin-top: 20px;
+            padding: 15px;
+            background: #1a1a1a;
+            border-radius: 5px;
+            font-size: 12px;
+        }}
+        
+        .stats h3 {{
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #00d4ff;
+        }}
+        
+        .stat-row {{
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }}
+        
+        .stat-label {{
+            color: #b0b0b0;
+        }}
+        
+        .stat-value {{
+            color: #e0e0e0;
+            font-weight: 600;
+        }}
+        
+        .track-list {{
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }}
+        
+        .track-item {{
+            padding: 8px;
+            margin-bottom: 5px;
+            background: #1a1a1a;
+            border-radius: 3px;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        
+        .track-color {{
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }}
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🔬 PTV Tracking Visualizer</h1>
+    </div>
+    
+    <div id="main-container">
+        <div id="canvas-container">
+            <canvas id="canvas" width="{width_px}" height="{height_px}"></canvas>
+        </div>
+        
+        <div id="sidebar">
+            <h3 style="margin-bottom: 15px;">Opciones de Visualización</h3>
+            
+            <div class="checkbox-group">
+                <input type="checkbox" id="showTrajectories" checked>
+                <label for="showTrajectories" style="margin: 0;">Mostrar trayectorias</label>
+            </div>
+            
+            <div class="checkbox-group">
+                <input type="checkbox" id="showTrackIDs" checked>
+                <label for="showTrackIDs" style="margin: 0;">Mostrar IDs</label>
+            </div>
+            
+            <div class="checkbox-group">
+                <input type="checkbox" id="showVelocityVectors">
+                <label for="showVelocityVectors" style="margin: 0;">Vectores de velocidad</label>
+            </div>
+            
+            <div class="control-group">
+                <label>Grosor de trayectorias: <span id="lineWidthValue">2</span>px</label>
+                <input type="range" id="lineWidth" min="1" max="5" value="2" step="0.5">
+            </div>
+            
+            <div class="control-group">
+                <label>Longitud histórico: <span id="tailLengthValue">Completo</span></label>
+                <input type="range" id="tailLength" min="0" max="100" value="0">
+            </div>
+            
+            <div class="stats">
+                <h3>Estadísticas del Frame</h3>
+                <div class="stat-row">
+                    <span class="stat-label">Frame actual:</span>
+                    <span class="stat-value" id="statFrame">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Tracks activos:</span>
+                    <span class="stat-value" id="statTracks">0</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Velocidad media:</span>
+                    <span class="stat-value" id="statVelocity">0.0 px/s</span>
+                </div>
+            </div>
+            
+            <div class="track-list" id="trackList">
+                <h3 style="margin-bottom: 10px;">Tracks Visibles</h3>
+            </div>
+        </div>
+    </div>
+    
+    <div id="controls">
+        <div class="control-group">
+            <label>Frame: <span class="frame-number" id="frameLabel">1 / {len(frames_data)}</span></label>
+            <input type="range" id="frameSlider" min="0" max="{len(frames_data) - 1}" value="0" step="1">
+            <div class="frame-info">
+                <span id="frameNameLabel">{frames_data[0]['name'] if frames_data else ''}</span>
+                <span id="timeLabel">0.00 s</span>
+            </div>
+        </div>
+        
+        <div class="play-controls">
+            <button id="prevBtn">◄ Anterior</button>
+            <button id="playBtn">▶ Play</button>
+            <button id="nextBtn">Siguiente ►</button>
+        </div>
+        
+        <div class="control-group" style="margin-top: 15px;">
+            <label>Velocidad de reproducción: <span id="speedValue">1x</span></label>
+            <input type="range" id="playSpeed" min="0.25" max="4" value="1" step="0.25">
+        </div>
+    </div>
+    
+    <script>
+        const framesData = {json.dumps(frames_data)};
+        const tracksByFrame = {json.dumps(tracks_by_frame)};
+        const FPS = {fps};
+        
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let currentFrame = 0;
+        let isPlaying = false;
+        let playInterval = null;
+        let playSpeed = 1;
+        
+        // Generar colores para tracks
+        const trackColors = {{}};
+        function getTrackColor(trackId) {{
+            if (!trackColors[trackId]) {{
+                const hue = (trackId * 137.508) % 360;
+                trackColors[trackId] = `hsl(${{hue}}, 70%, 60%)`;
+            }}
+            return trackColors[trackId];
+        }}
+        
+        function drawFrame(frameIdx) {{
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (frameIdx >= framesData.length) return;
+            
+            const frameData = framesData[frameIdx];
+            const img = new Image();
+            
+            img.onload = () => {{
+                ctx.drawImage(img, 0, 0);
+                
+                const tracks = tracksByFrame[frameIdx] || [];
+                const showTrajectories = document.getElementById('showTrajectories').checked;
+                const showIDs = document.getElementById('showTrackIDs').checked;
+                const showVectors = document.getElementById('showVelocityVectors').checked;
+                const lineWidth = parseFloat(document.getElementById('lineWidth').value);
+                const tailLength = parseInt(document.getElementById('tailLength').value);
+                
+                // Dibujar trayectorias
+                if (showTrajectories) {{
+                    tracks.forEach(track => {{
+                        const color = getTrackColor(track.track_id);
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = lineWidth;
+                        
+                        let history = track.history;
+                        if (tailLength > 0 && history.length > tailLength) {{
+                            history = history.slice(-tailLength);
+                        }}
+                        
+                        if (history.length > 1) {{
+                            ctx.beginPath();
+                            ctx.moveTo(history[0].x, history[0].y);
+                            for (let i = 1; i < history.length; i++) {{
+                                ctx.lineTo(history[i].x, history[i].y);
+                            }}
+                            ctx.stroke();
+                        }}
+                    }});
+                }}
+                
+                // Dibujar posiciones actuales y vectores
+                tracks.forEach(track => {{
+                    const color = getTrackColor(track.track_id);
+                    
+                    // Punto actual
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(track.x, track.y, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Vector de velocidad
+                    if (showVectors) {{
+                        const vMag = Math.sqrt(track.vx * track.vx + track.vy * track.vy);
+                        if (vMag > 0.1) {{
+                            const scale = 2.0;
+                            const dx = track.vx * scale;
+                            const dy = track.vy * scale;
+                            
+                            ctx.strokeStyle = color;
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.moveTo(track.x, track.y);
+                            ctx.lineTo(track.x + dx, track.y + dy);
+                            ctx.stroke();
+                            
+                            // Punta de flecha
+                            const angle = Math.atan2(dy, dx);
+                            const arrowSize = 8;
+                            ctx.beginPath();
+                            ctx.moveTo(track.x + dx, track.y + dy);
+                            ctx.lineTo(
+                                track.x + dx - arrowSize * Math.cos(angle - Math.PI / 6),
+                                track.y + dy - arrowSize * Math.sin(angle - Math.PI / 6)
+                            );
+                            ctx.moveTo(track.x + dx, track.y + dy);
+                            ctx.lineTo(
+                                track.x + dx - arrowSize * Math.cos(angle + Math.PI / 6),
+                                track.y + dy - arrowSize * Math.sin(angle + Math.PI / 6)
+                            );
+                            ctx.stroke();
+                        }}
+                    }}
+                    
+                    // ID del track
+                    if (showIDs) {{
+                        ctx.fillStyle = color;
+                        ctx.font = 'bold 12px monospace';
+                        ctx.fillText(`ID ${{track.track_id}}`, track.x + 8, track.y - 8);
+                    }}
+                }});
+                
+                // Actualizar estadísticas
+                updateStats(frameIdx, tracks);
+            }};
+            
+            img.src = frameData.data;
+        }}
+        
+        function updateStats(frameIdx, tracks) {{
+            document.getElementById('statFrame').textContent = frameIdx + 1;
+            document.getElementById('statTracks').textContent = tracks.length;
+            
+            if (tracks.length > 0) {{
+                const avgVel = tracks.reduce((sum, t) => {{
+                    return sum + Math.sqrt(t.vx * t.vx + t.vy * t.vy);
+                }}, 0) / tracks.length;
+                document.getElementById('statVelocity').textContent = avgVel.toFixed(2) + ' px/s';
+            }} else {{
+                document.getElementById('statVelocity').textContent = '0.0 px/s';
+            }}
+            
+            // Actualizar lista de tracks
+            const trackList = document.getElementById('trackList');
+            const trackListHTML = tracks.map(t => {{
+                const color = getTrackColor(t.track_id);
+                const vel = Math.sqrt(t.vx * t.vx + t.vy * t.vy);
+                return `
+                    <div class="track-item">
+                        <div>
+                            <span class="track-color" style="background: ${{color}}"></span>
+                            <strong>Track ${{t.track_id}}</strong>
+                        </div>
+                        <div style="font-size: 11px; color: #b0b0b0;">
+                            v: ${{vel.toFixed(1)}} px/s
+                        </div>
+                    </div>
+                `;
+            }}).join('');
+            
+            if (tracks.length > 0) {{
+                trackList.innerHTML = '<h3 style="margin-bottom: 10px;">Tracks Visibles</h3>' + trackListHTML;
+            }} else {{
+                trackList.innerHTML = '<h3 style="margin-bottom: 10px;">Tracks Visibles</h3><p style="color: #808080; font-size: 12px;">Sin tracks en este frame</p>';
+            }}
+        }}
+        
+        function updateFrame(frameIdx) {{
+            currentFrame = frameIdx;
+            document.getElementById('frameSlider').value = frameIdx;
+            document.getElementById('frameLabel').textContent = `${{frameIdx + 1}} / ${{framesData.length}}`;
+            document.getElementById('frameNameLabel').textContent = framesData[frameIdx].name;
+            document.getElementById('timeLabel').textContent = (frameIdx / FPS).toFixed(2) + ' s';
+            drawFrame(frameIdx);
+        }}
+        
+        function play() {{
+            if (isPlaying) {{
+                isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶ Play';
+                document.getElementById('playBtn').classList.remove('active');
+                if (playInterval) clearInterval(playInterval);
+                return;
+            }}
+            
+            isPlaying = true;
+            document.getElementById('playBtn').textContent = '⏸ Pause';
+            document.getElementById('playBtn').classList.add('active');
+            
+            playInterval = setInterval(() => {{
+                if (currentFrame >= framesData.length - 1) {{
+                    currentFrame = 0;
+                }} else {{
+                    currentFrame++;
+                }}
+                updateFrame(currentFrame);
+            }}, 1000 / (FPS * playSpeed));
+        }}
+        
+        // Event listeners
+        document.getElementById('frameSlider').addEventListener('input', (e) => {{
+            if (isPlaying) play(); // Pause si se mueve el slider
+            updateFrame(parseInt(e.target.value));
+        }});
+        
+        document.getElementById('prevBtn').addEventListener('click', () => {{
+            if (isPlaying) play();
+            updateFrame(Math.max(0, currentFrame - 1));
+        }});
+        
+        document.getElementById('nextBtn').addEventListener('click', () => {{
+            if (isPlaying) play();
+            updateFrame(Math.min(framesData.length - 1, currentFrame + 1));
+        }});
+        
+        document.getElementById('playBtn').addEventListener('click', play);
+        
+        document.getElementById('playSpeed').addEventListener('input', (e) => {{
+            playSpeed = parseFloat(e.target.value);
+            document.getElementById('speedValue').textContent = playSpeed + 'x';
+            if (isPlaying) {{
+                play();
+                play();
+            }}
+        }});
+        
+        document.getElementById('lineWidth').addEventListener('input', (e) => {{
+            document.getElementById('lineWidthValue').textContent = e.target.value;
+            drawFrame(currentFrame);
+        }});
+        
+        document.getElementById('tailLength').addEventListener('input', (e) => {{
+            const val = parseInt(e.target.value);
+            document.getElementById('tailLengthValue').textContent = val === 0 ? 'Completo' : val + ' frames';
+            drawFrame(currentFrame);
+        }});
+        
+        document.getElementById('showTrajectories').addEventListener('change', () => drawFrame(currentFrame));
+        document.getElementById('showTrackIDs').addEventListener('change', () => drawFrame(currentFrame));
+        document.getElementById('showVelocityVectors').addEventListener('change', () => drawFrame(currentFrame));
+        
+        // Atajos de teclado
+        document.addEventListener('keydown', (e) => {{
+            if (e.key === ' ') {{
+                e.preventDefault();
+                play();
+            }} else if (e.key === 'ArrowLeft') {{
+                if (isPlaying) play();
+                updateFrame(Math.max(0, currentFrame - 1));
+            }} else if (e.key === 'ArrowRight') {{
+                if (isPlaying) play();
+                updateFrame(Math.min(framesData.length - 1, currentFrame + 1));
+            }}
+        }});
+        
+        // Inicializar
+        updateFrame(0);
+    </script>
+</body>
+</html>
+"""
+    
+    out_path.write_text(html_content, encoding='utf-8')
+    print(f"[PTV] Visualizador interactivo creado: {out_path}", flush=True)
+
+
+# ============================================================
 # CONFIG BUILD
 # ============================================================
 
@@ -991,11 +1619,25 @@ def main() -> None:
     }
     save_json(summary, run_cfg.out_dir / "summary.json")
 
+    # NUEVO: Generar visualizador interactivo
+    if run_cfg.annotate:
+        print("[PTV] Generando visualizador interactivo...", flush=True)
+        create_interactive_visualizer(
+            ann_dir=ann_dir,
+            tracks=tracks_filtered,
+            out_path=run_cfg.out_dir / "visualizer.html",
+            width_px=run_cfg.width_px,
+            height_px=run_cfg.height_px,
+            fps=run_cfg.fps,
+        )
+
     print("[PTV] listo.", flush=True)
     print(f"[PTV] detections.csv -> {run_cfg.out_dir / 'detections.csv'}", flush=True)
     print(f"[PTV] tracks.csv     -> {run_cfg.out_dir / 'tracks.csv'}", flush=True)
     print(f"[PTV] tracks.json    -> {run_cfg.out_dir / 'tracks.json'}", flush=True)
     print(f"[PTV] summary.json   -> {run_cfg.out_dir / 'summary.json'}", flush=True)
+    if run_cfg.annotate:
+        print(f"[PTV] visualizer.html -> {run_cfg.out_dir / 'visualizer.html'}", flush=True)
 
 
 if __name__ == "__main__":
