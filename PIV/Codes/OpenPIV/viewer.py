@@ -697,7 +697,8 @@ class PIVViewer:
         fig.canvas.mpl_connect('key_press_event', on_key)
 
         update()
-        plt.show()
+        #plt.show()
+        plt.close(fig)
 
     def show_final(self, finals: List[PIVResultFinal], names: List[str], cfg: PIVConfig) -> None:
         """Vista final con información temporal mejorada."""
@@ -1026,4 +1027,5 @@ class PIVViewer:
         fig.canvas.mpl_connect('key_press_event', on_key)
 
         update()
-        plt.show()
+        #plt.show()
+        plt.close(fig)

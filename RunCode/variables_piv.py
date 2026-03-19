@@ -234,7 +234,7 @@ TEMPORAL_REGIONS_CAR02 = {
         TemporalRegion(
             name="baja_velocidad",
             start_time=8,
-            end_time=30.0,
+            end_time=20.0,
             block_size=22,
             skip_inter=8,
             skip_final=12,
