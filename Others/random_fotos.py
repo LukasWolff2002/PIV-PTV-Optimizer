@@ -33,17 +33,17 @@ CAM_PREPROCESS_PARAMS = {
         'roi_width': 100,
         'roi_height': 100,
         'clahe_enabled': True,
-        'clahe_tile_size': 175,
-        'clahe_clip_limit': 0.1000,
+        'clahe_tile_size': 200,
+        'clahe_clip_limit': 0.0010,
         'intensity_capping': True,
-        'capping_n_std': 1.4737,
+        'capping_n_std': 5.0000,
         'highpass_enabled': False,
-        'highpass_size': 28,
+        'highpass_size': 15,
         'wiener_enabled': False,
         'wiener_size': 3,
         'gaussian_size': 3,
-        'min_intensity': 0.1316,
-        'max_intensity': 0.6447,
+        'min_intensity': 0.0395,
+        'max_intensity': 1.0000,
     },
     'cam2': {
         'roi_enabled': False,
@@ -52,8 +52,8 @@ CAM_PREPROCESS_PARAMS = {
         'roi_width': 100,
         'roi_height': 100,
         'clahe_enabled': True,
-        'clahe_tile_size': 155,
-        'clahe_clip_limit': 0.0010,
+        'clahe_tile_size': 17,
+        'clahe_clip_limit': 0.0492,
         'intensity_capping': True,
         'capping_n_std': 5.0000,
         'highpass_enabled': False,
@@ -61,8 +61,8 @@ CAM_PREPROCESS_PARAMS = {
         'wiener_enabled': False,
         'wiener_size': 3,
         'gaussian_size': 3,
-        'min_intensity': 0.1974,
-        'max_intensity': 0.8421,
+        'min_intensity': 0.0000,
+        'max_intensity': 1.0000,
     },
     'cam3': {
         'roi_enabled': False,
@@ -71,7 +71,7 @@ CAM_PREPROCESS_PARAMS = {
         'roi_width': 100,
         'roi_height': 100,
         'clahe_enabled': True,
-        'clahe_tile_size': 159,
+        'clahe_tile_size': 10,
         'clahe_clip_limit': 0.1000,
         'intensity_capping': True,
         'capping_n_std': 5.0000,
@@ -80,8 +80,8 @@ CAM_PREPROCESS_PARAMS = {
         'wiener_enabled': False,
         'wiener_size': 3,
         'gaussian_size': 3,
-        'min_intensity': 0.1184,
-        'max_intensity': 0.7763,
+        'min_intensity': 0.0000,
+        'max_intensity': 1.0000,
     },
     'cam4': {
         'roi_enabled': False,
@@ -90,17 +90,17 @@ CAM_PREPROCESS_PARAMS = {
         'roi_width': 100,
         'roi_height': 100,
         'clahe_enabled': True,
-        'clahe_tile_size': 200,
-        'clahe_clip_limit': 0.0635,
+        'clahe_tile_size': 10,
+        'clahe_clip_limit': 0.0100,
         'intensity_capping': True,
-        'capping_n_std': 3.1053,
+        'capping_n_std': 5.0000,
         'highpass_enabled': False,
         'highpass_size': 15,
         'wiener_enabled': False,
         'wiener_size': 3,
         'gaussian_size': 3,
-        'min_intensity': 0.1053,
-        'max_intensity': 0.8289,
+        'min_intensity': 0.0000,
+        'max_intensity': 0.7237,
     },
 }
 
@@ -284,9 +284,9 @@ def copiar_preprocesar_y_convertir_fotos_random(carpeta_origen, carpeta_destino,
 # =========================================================
 # CONFIGURACIÓN
 # =========================================================
-RUTA_ORIGEN = r"PTV\Tomas\m77-toma-1-cam-1-n-1500-car-02-ptv"
+RUTA_ORIGEN = r"PIV\Tomas\m80-toma-2-cam-1-n-3000-car-02-piv"
 RUTA_DESTINO = r"fotos_random"
-NUMERO_DE_FOTOS = 500
+NUMERO_DE_FOTOS = 1000
 
 
 # =========================================================
