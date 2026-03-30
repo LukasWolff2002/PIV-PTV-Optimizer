@@ -1,123 +1,144 @@
-# tracker.py
+"""
+tracker.py
+==========
+Tracker multi-objeto con filtro ABG y gate espacial + angular.
+"""
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
-import math
 
-from config import TrackingConfig
-from models import Detection, Track, TrackState
-from abg_filter import ABGFilter, normalize_angle_deg, shortest_angle_diff_deg
+from .config import TrackingConfig
+from .models import Detection, Track, TrackRecord, TrackState
+from .filters import predict_state_abg, update_state_abg
+from .image_utils import angle_diff_deg
 
 
-@dataclass
 class Tracker:
-    cfg: TrackingConfig
+    """
+    Asigna detecciones a tracks existentes usando cost mínimo con gate.
+    Crea nuevos tracks para detecciones no asignadas.
+    Elimina tracks con demasiados misses.
+    """
 
-    def __post_init__(self) -> None:
-        self.filt = ABGFilter(self.cfg)
-        self.tracks: Dict[str, Track] = {}
-        self.next_id: int = 0
+    def __init__(self, cfg: TrackingConfig):
+        self.cfg = cfg
+        self.active_tracks: list[Track] = []
+        self.finished_tracks: list[Track] = []
+        self.next_track_id = 1
 
-    def _new_id(self) -> str:
-        self.next_id += 1
-        return str(self.next_id)
+    def _candidate_cost(self, track: Track, det: Detection) -> float | None:
+        """Retorna costo de asignación o None si está fuera del gate."""
+        pred = track.state
+        dx = det.cx - pred.x
+        dy = det.cy - pred.y
+        da = angle_diff_deg(det.angle_deg, pred.angle_deg)
 
-    def _init_track(self, det: Detection, frame_idx: int) -> Track:
-        tid = self._new_id()
-        s = TrackState(x=det.cx, y=det.cy, angle_deg=normalize_angle_deg(det.angle_deg), length_px=det.length_px)
-        tr = Track(track_id=tid, state=s, history={
-            "centroide": [[det.cx, det.cy]],
-            "largo_maximo": [[det.length_px]],
-            "angulo": [[normalize_angle_deg(det.angle_deg)]],
-            "frame": [[frame_idx]],
-            "estado": [self._state_to_list(s)],
-        })
+        if abs(dx) > self.cfg.gate_x_px:
+            return None
+        if abs(dy) > self.cfg.gate_y_px:
+            return None
+        if da > self.cfg.gate_angle_deg:
+            return None
+
+        sx = abs(dx) / max(self.cfg.gate_x_px, 1e-12)
+        sy = abs(dy) / max(self.cfg.gate_y_px, 1e-12)
+        sa = da / max(self.cfg.gate_angle_deg, 1e-12)
+        return float(sx + sy + sa)
+
+    def _new_track(self, det: Detection, image_name: str) -> Track:
+        state = TrackState(
+            x=det.cx, y=det.cy,
+            angle_deg=det.angle_deg,
+            length_px=det.length_px,
+            width_px=det.width_px,
+        )
+        tr = Track(track_id=self.next_track_id, state=state, hits=1)
+        tr.history.append(TrackRecord(
+            frame_idx=det.frame_idx, image_name=image_name,
+            x=state.x, y=state.y,
+            vx=state.vx, vy=state.vy,
+            ax=state.ax, ay=state.ay,
+            angle_deg=state.angle_deg,
+            omega=state.omega, alpha_ang=state.alpha_ang,
+            length_px=state.length_px, width_px=state.width_px,
+            det_id=det.det_id,
+        ))
+        self.next_track_id += 1
         return tr
 
-    def _state_to_list(self, s: TrackState) -> list:
-        # para JSON “compatible” con tu formato (similar a kalman list)
-        return [
-            [s.x, s.y],
-            [s.vx, s.vy],
-            [s.ax, s.ay],
-            [s.angle_deg],
-            [s.omega],
-            [s.alpha_ang],
-            [s.length_px],
-        ]
+    def step(
+        self,
+        detections: list[Detection],
+        frame_idx: int,
+        image_name: str,
+    ) -> None:
+        dt = self.cfg.dt
 
-    def _gating_ok(self, pred: TrackState, det: Detection) -> bool:
-        dx = abs(pred.x - det.cx)
-        dy = abs(pred.y - det.cy)
-        if dx > self.cfg.gate_x_px or dy > self.cfg.gate_y_px:
-            return False
+        # Predicción
+        for tr in self.active_tracks:
+            tr.state = predict_state_abg(tr.state, dt)
 
-        dtheta = abs(shortest_angle_diff_deg(det.angle_deg, pred.angle_deg))
-        if dtheta > self.cfg.gate_angle_deg:
-            return False
-
-        return True
-
-    def _cost(self, pred: TrackState, det: Detection) -> float:
-        # costo simple: distancia + peso angular
-        dx = pred.x - det.cx
-        dy = pred.y - det.cy
-        d = math.sqrt(dx*dx + dy*dy)
-        dtheta = abs(shortest_angle_diff_deg(det.angle_deg, pred.angle_deg))
-        return d + 0.3 * dtheta
-
-    def step(self, detections: List[Detection], frame_idx: int, dt: float) -> Dict[int, str]:
-        """
-        Procesa un frame.
-        Retorna mapping: index_det -> track_id asignado
-        """
-        assigned: Dict[int, str] = {}
-        used_tracks: set[str] = set()
-
-        # 1) predecir todos los tracks existentes
-        preds: Dict[str, TrackState] = {}
-        for tid, tr in self.tracks.items():
-            preds[tid] = self.filt.predict(tr.state, dt)
-
-        # 2) construir todas las parejas (det, track) válidas por gating
-        candidates: List[Tuple[float, int, str]] = []
-        for i, det in enumerate(detections):
-            for tid, pred in preds.items():
-                if self._gating_ok(pred, det):
-                    candidates.append((self._cost(pred, det), i, tid))
-
-        # 3) asignación greedy por menor costo
+        # Construir lista de candidatos ordenada por costo
+        candidates: list[tuple[float, int, int]] = []
+        for ti, tr in enumerate(self.active_tracks):
+            for di, det in enumerate(detections):
+                cost = self._candidate_cost(tr, det)
+                if cost is not None:
+                    candidates.append((cost, ti, di))
         candidates.sort(key=lambda x: x[0])
-        for cost, i, tid in candidates:
-            if i in assigned:
-                continue
-            if tid in used_tracks:
-                continue
-            assigned[i] = tid
-            used_tracks.add(tid)
 
-        # 4) actualizar tracks asignados; crear tracks nuevos para detecciones no asignadas
-        for i, det in enumerate(detections):
-            if i in assigned:
-                tid = assigned[i]
-                pred = preds[tid]
-                new_state = self.filt.update(pred, det, dt)
-                tr = self.tracks[tid]
-                tr.state = new_state
-                tr.history["centroide"].append([det.cx, det.cy])
-                tr.history["largo_maximo"].append([det.length_px])
-                tr.history["angulo"].append([normalize_angle_deg(det.angle_deg)])
-                tr.history["frame"].append([frame_idx])
-                tr.history["estado"].append(self._state_to_list(new_state))
+        assigned_tracks: set[int] = set()
+        assigned_dets: set[int] = set()
+
+        for _, ti, di in candidates:
+            if ti in assigned_tracks or di in assigned_dets:
+                continue
+
+            tr = self.active_tracks[ti]
+            det = detections[di]
+
+            tr.state = update_state_abg(
+                pred=tr.state, det=det,
+                alpha=self.cfg.alpha, beta=self.cfg.beta,
+                gamma=self.cfg.gamma, dt=dt,
+            )
+            tr.hits += 1
+            tr.misses = 0
+            tr.history.append(TrackRecord(
+                frame_idx=frame_idx, image_name=image_name,
+                x=tr.state.x, y=tr.state.y,
+                vx=tr.state.vx, vy=tr.state.vy,
+                ax=tr.state.ax, ay=tr.state.ay,
+                angle_deg=tr.state.angle_deg,
+                omega=tr.state.omega, alpha_ang=tr.state.alpha_ang,
+                length_px=tr.state.length_px, width_px=tr.state.width_px,
+                det_id=det.det_id,
+            ))
+            assigned_tracks.add(ti)
+            assigned_dets.add(di)
+
+        # Gestión de misses
+        survivors: list[Track] = []
+        for ti, tr in enumerate(self.active_tracks):
+            if ti not in assigned_tracks:
+                tr.misses += 1
+                if tr.misses <= self.cfg.max_misses:
+                    survivors.append(tr)
+                else:
+                    tr.is_active = False
+                    self.finished_tracks.append(tr)
             else:
-                tr = self._init_track(det, frame_idx)
-                self.tracks[tr.track_id] = tr
-                assigned[i] = tr.track_id
+                survivors.append(tr)
+        self.active_tracks = survivors
 
-        return assigned
+        # Nuevos tracks para detecciones no asignadas
+        for di, det in enumerate(detections):
+            if di not in assigned_dets:
+                self.active_tracks.append(self._new_track(det, image_name))
 
-    def export_dict(self) -> dict:
-        out = {}
-        for tid, tr in self.tracks.items():
-            out[tid] = tr.history
-        return out
+    def close_all(self) -> None:
+        for tr in self.active_tracks:
+            tr.is_active = False
+            self.finished_tracks.append(tr)
+        self.active_tracks = []
+
+    def get_all_tracks(self) -> list[Track]:
+        return list(self.finished_tracks) + list(self.active_tracks)
