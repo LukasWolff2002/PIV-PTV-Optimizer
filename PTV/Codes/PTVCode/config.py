@@ -42,6 +42,12 @@ class TrackingConfig:
     device: str | int | None = None
     max_misses: int = 2
 
+    # ── Similarity Search Scheme ────────────────────────────────
+    sim_threshold: float = 0.85
+    max_dist_px: float = 80.0
+    feat_weights: tuple = (1.0, 1.0, 0.5, 1.5, 1.5)
+    l_ref_px: float = 101.4   # 13 mm × 7.8 px/mm
+
     @property
     def dt(self) -> float:
         return 1.0 / self.fps
@@ -77,6 +83,10 @@ def build_tracking_config(cfg: dict) -> TrackingConfig:
         annotate=bool(ptv.get("annotate", False)),
         device=None,
         max_misses=2,
+        sim_threshold=float(ptv.get("sim_threshold", 0.85)),
+        max_dist_px=float(ptv.get("max_dist_px", 80.0)),
+        feat_weights=tuple(ptv.get("feat_weights", [1.0, 1.0, 0.5, 1.5, 1.5])),
+        l_ref_px=float(ptv.get("l_ref_px", 101.4)),
     )
 
 

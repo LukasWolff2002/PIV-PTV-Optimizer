@@ -65,7 +65,10 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
         conf=run_cfg.conf,
         device=run_cfg.device,
     )
-    tracker = Tracker(run_cfg)
+    tracker = Tracker(
+        cfg=run_cfg,
+        similarity_threshold=getattr(run_cfg, "similarity_threshold", 0.25),
+    )
 
     all_detections: list[Detection] = []
     static_mask_keep: np.ndarray | None = None
@@ -95,20 +98,26 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
                 )
             rgb_u8 = apply_static_mask_to_rgb(rgb_u8, static_mask_keep)
 
-        # 3) Detección
-        detections, next_det_id = detector.detect(
+        # 3) Detección — también extraer máscaras para SSS
+        detections, next_det_id, det_masks = detector.detect(
             image_rgb_u8=rgb_u8,
             frame_idx=frame_idx,
             image_name=img_path.name,
             next_det_id=next_det_id,
+            return_masks=True,
         )
         all_detections.extend(detections)
 
-        # 4) Tracking
+        # Imagen en escala de grises [0,1] para features de textura
+        image_gray = rgb_u8[..., 0].astype(np.float32) / 255.0
+
+        # 4) Tracking con SSS
         tracker.step(
             detections=detections,
             frame_idx=frame_idx,
             image_name=img_path.name,
+            det_masks=det_masks,
+            image_gray=image_gray,
         )
 
         # 5) Anotación

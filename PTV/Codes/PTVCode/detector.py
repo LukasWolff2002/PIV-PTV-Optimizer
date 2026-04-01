@@ -34,7 +34,8 @@ class FiberYOLODetector:
         frame_idx: int,
         image_name: str,
         next_det_id: int,
-    ) -> tuple[list[Detection], int]:
+        return_masks: bool = False,
+    ) -> tuple[list[Detection], int] | tuple[list[Detection], int, list]:
         """
         Detecta fibras en un frame RGB uint8.
         Retorna (lista de detecciones, próximo det_id disponible).
@@ -58,6 +59,7 @@ class FiberYOLODetector:
             return [], next_det_id
 
         detections: list[Detection] = []
+        masks_out: list = []
         boxes = result.boxes
 
         for i, poly_raw in enumerate(result.masks.xy):
@@ -90,6 +92,9 @@ class FiberYOLODetector:
                 score=score,
                 bbox_xyxy=geom["bbox_xyxy"],
             ))
+            masks_out.append(mask_u8)
             next_det_id += 1
 
+        if return_masks:
+            return detections, next_det_id, masks_out
         return detections, next_det_id
