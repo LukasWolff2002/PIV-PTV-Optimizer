@@ -33,6 +33,7 @@ CONDA_BAT = next((str(p) for p in CONDA_BAT_OPTIONS if p.exists()), None)
 
 ENV_YOLO = "yolov11"
 ENV_PIV  = "piv"
+ENV_PTV  = "yolox4"  # <-- NUEVO ENTORNO ESPECÍFICO PARA PTV
 
 RUNCODE_DIR       = PROJECT_ROOT / "RunCode"
 PREPROCESS_SCRIPT = RUNCODE_DIR / "preprocess_run.py"
@@ -46,15 +47,15 @@ FIX_MASKS_DIR = PROJECT_ROOT / "FixMasks"
 GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQj9_M-1BdxtMDhG9u7j0qpO5WKN5tGZMe6lXdm-DZi-CIhwKY907aNLCLAXHppkda2AI5g2qX_p24S/pub?output=csv"
 
 CAM_PROFILES = {
-    1: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=8,   width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
-    2: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=7.8, width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
-    3: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=7.8, width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
-    4: dict(fps=660, dt_ms=1000*(1/660), px_per_mm=10.7, width_px=384, height_px=384,  apply_dynamic_mask=True, apply_static_mask=True),
+    1: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=8,    width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
+    2: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,  width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
+    3: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,  width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
+    4: dict(fps=660, dt_ms=1000*(1/660), px_per_mm=10.7, width_px=384,  height_px=384,  apply_dynamic_mask=True, apply_static_mask=True),
 }
 
 
 # ============================================================
-# GOOGLE SHEETS INTEGRATION  (sin cambios)
+# GOOGLE SHEETS INTEGRATION
 # ============================================================
 
 def should_process_folder(mezcla: str, toma: int, carbopol: str, metodo: str = "piv") -> bool:
@@ -69,7 +70,6 @@ def should_process_folder(mezcla: str, toma: int, carbopol: str, metodo: str = "
         (df['Toma'] == toma) &
         (df['Tipo'] == carbopol_float)
     )
-    # Filtrar por columna Metodo si existe (PIV vs PTV)
     if 'Metodo' in df.columns:
         mask = mask & (df['Metodo'].astype(str).str.lower() == metodo.lower())
 
@@ -162,7 +162,7 @@ def get_skip_images_for_folder(mezcla: str, toma: int, carbopol: str, cam: int, 
 
 
 # ============================================================
-# HELPERS  (sin cambios)
+# HELPERS
 # ============================================================
 
 def natural_key(s: str):
@@ -417,7 +417,7 @@ def write_cfg(
 
 
 # ============================================================
-# PIPELINES  (sin cambios)
+# PIPELINES
 # ============================================================
 
 def run_one_piv_folder(pre_sub: Path) -> None:
@@ -466,12 +466,12 @@ def run_one_ptv_folder(ptv_sub: Path) -> None:
     write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, carbopol=carbopol, prof=prof, skip_first_images=skip_images)
     print(f"\n[PIPE] === PTV: {ptv_sub.name} (cam={cam}, car={carbopol}, skip={skip_images}) ===", flush=True)
     print(f"[PIPE] PTV -> {ptv_vars.RESULTS_PTV_ROOT / ptv_sub.name}", flush=True)
-    run_env(ENV_YOLO, PTV_SCRIPT)
+    run_env(ENV_PTV, PTV_SCRIPT)  # <-- CAMBIADO AQUÍ: Ejecuta con ENV_PTV en lugar de ENV_YOLO
     print(f"[OK] PTV completado: {ptv_sub.name}\n", flush=True)
 
 
 # ============================================================
-# MAIN  (sin cambios)
+# MAIN
 # ============================================================
 
 def main() -> None:
