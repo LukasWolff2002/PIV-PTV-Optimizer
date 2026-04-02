@@ -14,7 +14,6 @@ from io import StringIO
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Importar variables de módulos separados
 import variables_piv as piv_vars
 import variables_ptv as ptv_vars
 
@@ -22,265 +21,148 @@ import variables_ptv as ptv_vars
 # CONFIGURACIÓN PRINCIPAL
 # ============================================================
 
-RUN_MODE = "piv"  # "piv" | "ptv" | "both"
+RUN_MODE = "ptv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
-# Posibles rutas de conda.bat
 CONDA_BAT_OPTIONS = [
     Path(r"C:\Users\SarumanPM\anaconda3\condabin\conda.bat"),
     Path(r"C:\Users\MBX\anaconda3\condabin\conda.bat"),
+    Path(r"C:\Users\lkwol\anaconda3\condabin\conda.bat"),
 ]
-
 CONDA_BAT = next((str(p) for p in CONDA_BAT_OPTIONS if p.exists()), None)
 
 ENV_YOLO = "yolov11"
-ENV_PIV = "piv"
+ENV_PIV  = "piv"
 
-# ---------- PATHS DE SCRIPTS ----------
-RUNCODE_DIR = PROJECT_ROOT / "RunCode"
+RUNCODE_DIR       = PROJECT_ROOT / "RunCode"
 PREPROCESS_SCRIPT = RUNCODE_DIR / "preprocess_run.py"
-PIV_SCRIPT = RUNCODE_DIR / "piv_run.py"
-PTV_SCRIPT = RUNCODE_DIR / "ptv_run.py"
-CLEANUP_SCRIPT = RUNCODE_DIR / "cleanup_run.py"
-CFG_PATH = RUNCODE_DIR / "pipeline_config.json"
+PIV_SCRIPT        = RUNCODE_DIR / "piv_run.py"
+PTV_SCRIPT        = RUNCODE_DIR / "ptv_run.py"
+CLEANUP_SCRIPT    = RUNCODE_DIR / "cleanup_run.py"
+CFG_PATH          = RUNCODE_DIR / "pipeline_config.json"
 
-# ---------- DIRECTORIO DE MÁSCARAS FIJAS (COMPARTIDO) ----------
 FIX_MASKS_DIR = PROJECT_ROOT / "FixMasks"
 
-# ---------- GOOGLE SHEETS CONFIG ----------
-# Reemplaza con tu URL pública de Google Sheets (Archivo → Compartir → Publicar en la web → CSV)
 GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQj9_M-1BdxtMDhG9u7j0qpO5WKN5tGZMe6lXdm-DZi-CIhwKY907aNLCLAXHppkda2AI5g2qX_p24S/pub?output=csv"
 
-# ---------- PERFILES POR CÁMARA (COMPARTIDO PIV/PTV) ----------
 CAM_PROFILES = {
-    1: dict(
-        fps=220,
-        dt_ms=1000 * (1 / 220),
-        px_per_mm=8,
-        width_px=1024,
-        height_px=1024,
-        apply_dynamic_mask=True,
-        apply_static_mask=True,
-    ),
-    2: dict(
-        fps=220,
-        dt_ms=1000 * (1 / 220),
-        px_per_mm=7.8,
-        width_px=1024,
-        height_px=1024,
-        apply_dynamic_mask=True,
-        apply_static_mask=True,
-    ),
-    3: dict(
-        fps=220,
-        dt_ms=1000 * (1 / 220),
-        px_per_mm=7.8,
-        width_px=1024,
-        height_px=1024,
-        apply_dynamic_mask=True,
-        apply_static_mask=True,
-    ),
-    4: dict(
-        fps=660,
-        dt_ms=1000 * (1 / 660),
-        px_per_mm=10.7,
-        width_px=384,
-        height_px=384,
-        apply_dynamic_mask=True,
-        apply_static_mask=True,
-    ),
+    1: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=8,   width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
+    2: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=7.8, width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
+    3: dict(fps=220, dt_ms=1000*(1/220), px_per_mm=7.8, width_px=1024, height_px=1024, apply_dynamic_mask=True, apply_static_mask=True),
+    4: dict(fps=660, dt_ms=1000*(1/660), px_per_mm=10.7, width_px=384, height_px=384,  apply_dynamic_mask=True, apply_static_mask=True),
 }
 
 
 # ============================================================
-# GOOGLE SHEETS INTEGRATION
+# GOOGLE SHEETS INTEGRATION  (sin cambios)
 # ============================================================
 
-def should_process_folder(mezcla: str, toma: int, carbopol: str) -> bool:
-    """
-    Verificar si una toma debe ser procesada según Google Sheets
-    
-    Args:
-        mezcla: código de mezcla (ej: "M72", "M84")
-        toma: número de toma (ej: 1, 2, 3)
-        carbopol: tipo de carbopol (ej: "02", "05")
-    
-    Returns:
-        True si debe procesarse, False si debe saltarse
-    """
+def should_process_folder(mezcla: str, toma: int, carbopol: str, metodo: str = "piv") -> bool:
     df = load_experiment_config()
     if df is None:
-        # Si no se puede cargar el sheet, procesar por defecto
         print(f"[WARN] No se pudo cargar Google Sheet, procesando por defecto", flush=True)
         return True
-    
-    # Normalizar carbopol: "02" -> 0.2, "05" -> 0.5
-    carbopol_float = float(carbopol) / 10.0
-    
-    # Normalizar mezcla para comparación
+    carbopol_float    = float(carbopol) / 10.0
     mezcla_normalized = mezcla.upper()
-    
-    # Filtrar fila correspondiente
     mask = (
         (df['Mezcla'].astype(str).str.upper() == mezcla_normalized) &
         (df['Toma'] == toma) &
         (df['Tipo'] == carbopol_float)
     )
-    
+    # Filtrar por columna Metodo si existe (PIV vs PTV)
+    if 'Metodo' in df.columns:
+        mask = mask & (df['Metodo'].astype(str).str.lower() == metodo.lower())
+
     matches = df[mask]
-    
     if len(matches) == 0:
-        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}, procesando por defecto", flush=True)
+        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}-{metodo.upper()}, procesando por defecto", flush=True)
         return True
-    
-    row = matches.iloc[0]
-    
-    # Obtener columna "Usar" (columna J)
-    usar_value = row.get('Usar', 'si')
-    
-    # Normalizar valor (manejar "Si", "SI", "sí", etc.)
+    row          = matches.iloc[0]
+    usar_value   = row.get('Usar', 'si')
     if pd.isna(usar_value):
         usar_value = 'si'
-    
     usar_normalized = str(usar_value).strip().lower()
-    
-    # Retornar True solo si es "si" o "sí"
     should_use = usar_normalized in ['si', 'sí', 's', 'yes', 'y']
-    
     if not should_use:
-        print(f"[SKIP] {mezcla}-Toma{toma}-Car{carbopol}: Usar={usar_value} → SALTANDO", flush=True)
-    
+        print(f"[SKIP] {mezcla}-Toma{toma}-Car{carbopol}-{metodo.upper()}: Usar={usar_value} → SALTANDO", flush=True)
     return should_use
 
+
 def load_experiment_config() -> pd.DataFrame | None:
-    """Cargar configuración de experimentos desde Google Sheets"""
     try:
         print(f"[INFO] Descargando Google Sheet...", flush=True)
-        
         response = requests.get(GOOGLE_SHEET_CSV_URL, timeout=10)
         response.raise_for_status()
-        
-        # Leer CSV
         df = pd.read_csv(StringIO(response.text))
-        
-        # CONVERTIR COMAS A PUNTOS en columna 'Tipo'
         if 'Tipo' in df.columns:
             df['Tipo'] = df['Tipo'].astype(str).str.replace(',', '.').astype(float)
-        
-        # CONVERTIR COMAS A PUNTOS en columna 'Fotos Saltar'
         if 'Fotos Saltar' in df.columns:
             df['Fotos Saltar'] = df['Fotos Saltar'].astype(str).str.replace(',', '.', regex=False)
             df['Fotos Saltar'] = pd.to_numeric(df['Fotos Saltar'], errors='coerce').fillna(0)
-        
         print(f"[INFO] Google Sheet cargado: {len(df)} filas", flush=True)
         return df
     except Exception as e:
         print(f"[WARN] No se pudo cargar Google Sheet: {e}", flush=True)
-        print(f"[WARN] Usando valores por defecto (skip=0)", flush=True)
         return None
 
 
 def parse_fps_ratio(ratio_str: str | float) -> float:
-    """
-    Parsear ratio de FPS desde string o número
-    
-    Args:
-        ratio_str: "1:3" o 3.0 o NaN
-    
-    Returns:
-        Factor multiplicador (ej: 3.0)
-    """
-    # Si es NaN o vacío, retornar 1.0
     if pd.isna(ratio_str):
         return 1.0
-    
-    # Si ya es número
     if isinstance(ratio_str, (int, float)):
         return float(ratio_str)
-    
-    # Si es string con formato "1:3"
     ratio_str = str(ratio_str).strip()
     if ':' in ratio_str:
         parts = ratio_str.split(':')
         if len(parts) == 2:
             try:
-                numerator = float(parts[0])
-                denominator = float(parts[1])
-                if numerator != 0:
-                    return denominator / numerator
+                num = float(parts[0])
+                den = float(parts[1])
+                if num != 0:
+                    return den / num
             except ValueError:
                 pass
-    
-    # Si es string numérico directo
     try:
         return float(ratio_str)
     except ValueError:
-        pass
-    
-    # Default
-    return 1.0
+        return 1.0
 
 
-def get_skip_images_for_folder(mezcla: str, toma: int, carbopol: str, cam: int) -> int:
-    """
-    Obtener número de imágenes a saltar para una toma específica
-    
-    Args:
-        mezcla: código de mezcla (ej: "M72", "M84")
-        toma: número de toma (ej: 1, 2, 3)
-        carbopol: tipo de carbopol (ej: "02", "05")
-        cam: número de cámara (1-4)
-    
-    Returns:
-        Número de imágenes a saltar (default: 0)
-    """
+def get_skip_images_for_folder(mezcla: str, toma: int, carbopol: str, cam: int, metodo: str = "piv") -> int:
     df = load_experiment_config()
     if df is None:
         return 0
-    
-    # Normalizar carbopol: "02" -> 0.2, "05" -> 0.5
-    carbopol_float = float(carbopol) / 10.0
-    
-    # Normalizar mezcla para comparación
+    carbopol_float    = float(carbopol) / 10.0
     mezcla_normalized = mezcla.upper()
-    
-    # Filtrar fila correspondiente
     mask = (
         (df['Mezcla'].astype(str).str.upper() == mezcla_normalized) &
         (df['Toma'] == toma) &
         (df['Tipo'] == carbopol_float)
     )
-    
+    if 'Metodo' in df.columns:
+        mask = mask & (df['Metodo'].astype(str).str.lower() == metodo.lower())
+
     matches = df[mask]
-    
     if len(matches) == 0:
-        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}, usando skip=0", flush=True)
+        print(f"[WARN] No se encontró config para {mezcla}-Toma{toma}-Car{carbopol}-{metodo.upper()}, usando skip=0", flush=True)
         return 0
-    
-    row = matches.iloc[0]
-    
-    # Obtener "Fotos Saltar" (columna I)
+    row        = matches.iloc[0]
     skip_value = row.get('Fotos Saltar', 0)
     if pd.isna(skip_value):
         skip_value = 0
-    skip_base = int(skip_value)
-    
-    # Obtener "Razon FPS" (columna H)
-    fps_ratio_value = row.get('Razon FPS', 1.0)
-    fps_ratio = parse_fps_ratio(fps_ratio_value)
-    
-    # Si es cámara 4, multiplicar por ratio de FPS
+    skip_base  = int(skip_value)
+    fps_ratio  = parse_fps_ratio(row.get('Razon FPS', 1.0))
     if cam == 4:
         skip_adjusted = int(skip_base * fps_ratio)
-        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base} × ratio={fps_ratio:.1f} = {skip_adjusted}", flush=True)
+        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol}-{metodo.upper()} Cam{cam}: skip={skip_base} × ratio={fps_ratio:.1f} = {skip_adjusted}", flush=True)
         return skip_adjusted
     else:
-        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol} Cam{cam}: skip={skip_base}", flush=True)
+        print(f"[INFO] {mezcla}-Toma{toma}-Car{carbopol}-{metodo.upper()} Cam{cam}: skip={skip_base}", flush=True)
         return skip_base
 
 
 # ============================================================
-# HELPERS
+# HELPERS  (sin cambios)
 # ============================================================
 
 def natural_key(s: str):
@@ -319,48 +201,37 @@ def fixed_mask_path_for_cam(cam: int) -> Path:
 
 
 def piv_model_path_for_cam(cam: int) -> Path:
-    """Retorna el path del modelo PIV para la cámara especificada."""
     return piv_vars.PIV_MODELS_DIR / f"cam{cam}-piv-yolo26.pt"
 
 
 def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict, int]:
-    """
-    Retorna (cam, carbopol, profile_dict, skip_first_images)
-    """
     info = parse_subfolder_name(folder.name)
     if info is None:
         raise RuntimeError(f"Nombre inválido: {folder.name}")
-
-    cam = int(info["cam"])
-    carbopol = info["car"]  # "02" o "05"
-    mezcla = f"M{info['mezcla']}"
-    toma = int(info["toma"])
-
-    # Obtener skip_images desde Google Sheet
-    skip_images = get_skip_images_for_folder(mezcla, toma, carbopol, cam)
-
+    cam      = int(info["cam"])
+    carbopol = info["car"]
+    mezcla   = f"M{info['mezcla']}"
+    toma     = int(info["toma"])
+    metodo   = info["metodo"]   # "ptv" o "piv" extraído del nombre de carpeta
+    skip_images = get_skip_images_for_folder(mezcla, toma, carbopol, cam, metodo=metodo)
     if cam not in CAM_PROFILES:
         raise RuntimeError(f"No hay perfil definido para cam={cam}")
-
     prof = dict(CAM_PROFILES[cam])
     prof["fixed_mask_path"] = str(fixed_mask_path_for_cam(cam))
-
     return cam, carbopol, prof, skip_images
 
 
 def run_env(env: str, script: Path) -> None:
     subprocess.run(
         [CONDA_BAT, "run", "-n", env, "python", str(script), str(CFG_PATH)],
-        check=True,
-        cwd=str(PROJECT_ROOT),
+        check=True, cwd=str(PROJECT_ROOT),
     )
 
 
 def run_any(script: Path) -> None:
     subprocess.run(
         ["python", str(script), str(CFG_PATH)],
-        check=True,
-        cwd=str(PROJECT_ROOT),
+        check=True, cwd=str(PROJECT_ROOT),
     )
 
 
@@ -374,40 +245,32 @@ def write_cfg(
     cam: int,
     carbopol: str,
     prof: dict,
-    skip_first_images: int
+    skip_first_images: int,
 ) -> None:
     pre_info = parse_subfolder_name(pre_sub.name) if pre_sub else None
     ptv_info = parse_subfolder_name(ptv_sub.name) if ptv_sub else None
-
     pre_name = pre_sub.name if pre_sub else ""
     ptv_name = ptv_sub.name if ptv_sub else ""
 
-    preprocess_params = piv_vars.CAM_PREPROCESS_PARAMS.get(f"cam{cam}", {})
+    preprocess_params     = piv_vars.CAM_PREPROCESS_PARAMS.get(f"cam{cam}", {})
     ptv_preprocess_params = ptv_vars.CAM_PREPROCESS_PARAMS_PTV.get(f"cam{cam}", {})
+    fixed_mask_path       = Path(prof["fixed_mask_path"]) if prof.get("fixed_mask_path") else None
+    piv_model_path        = piv_model_path_for_cam(cam)
+    piv_params            = piv_vars.get_piv_params(cam, carbopol)
 
-    fixed_mask_path = Path(prof["fixed_mask_path"]) if prof.get("fixed_mask_path") else None
-
-    # Selección automática del modelo PIV según cámara
-    piv_model_path = piv_model_path_for_cam(cam)
-
-    # Obtener parámetros PIV según cámara y carbopol
-    piv_params = piv_vars.get_piv_params(cam, carbopol)
-
-    # Preparar regiones temporales si están habilitadas
     temporal_regions_config = None
     if piv_vars.USE_TEMPORAL_REGIONS:
         regions = piv_vars.get_temporal_regions(cam, carbopol)
-        
         if regions:
             temporal_regions_config = [
                 {
-                    "name": r.name,
+                    "name":       r.name,
                     "start_time": r.start_time,
-                    "end_time": r.end_time,
+                    "end_time":   r.end_time,
                     "block_size": r.block_size,
                     "skip_inter": r.skip_inter,
                     "skip_final": r.skip_final,
-                    "fps": r.fps,
+                    "fps":        r.fps,
                 }
                 for r in regions
             ]
@@ -416,206 +279,201 @@ def write_cfg(
 
     cfg = {
         "meta": {
-            "cam": cam,
-            "carbopol": carbopol,
+            "cam":             cam,
+            "carbopol":        carbopol,
             "skip_first_images": skip_first_images,
-            "cam_profile": prof,
-            "pre_subfolder": pre_sub.name if pre_sub else None,
-            "ptv_subfolder": ptv_sub.name if ptv_sub else None,
-            "pre_info": pre_info,
-            "ptv_info": ptv_info,
+            "cam_profile":     prof,
+            "pre_subfolder":   pre_sub.name if pre_sub else None,
+            "ptv_subfolder":   ptv_sub.name if ptv_sub else None,
+            "pre_info":        pre_info,
+            "ptv_info":        ptv_info,
         },
 
         "camera": {
-            "cam": cam,
-            "fps": prof["fps"],
-            "dt_ms": prof["dt_ms"],
-            "px_per_mm": prof["px_per_mm"],
-            "width_px": prof["width_px"],
-            "height_px": prof["height_px"],
+            "cam":                cam,
+            "fps":                prof["fps"],
+            "dt_ms":              prof["dt_ms"],
+            "px_per_mm":          prof["px_per_mm"],
+            "width_px":           prof["width_px"],
+            "height_px":          prof["height_px"],
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
-            "apply_static_mask": bool(prof["apply_static_mask"]),
-            "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
+            "apply_static_mask":  bool(prof["apply_static_mask"]),
+            "fixed_mask_path":    str(fixed_mask_path) if fixed_mask_path else None,
         },
 
         "pre": {
-            "input_subdir": str(pre_sub) if pre_sub else None,
-            "dest_out_dir": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_out_dir": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
-            "blocks": piv_vars.BLOCKS,
-            "block_size": piv_vars.BLOCK_SIZE,
-            "skip_inter": piv_vars.SKIP_INTER,
-            "skip_final": piv_vars.SKIP_FINAL,
-            "skip_first_images": skip_first_images,
-            "delete_existing": piv_vars.DELETE_EXISTING_PRE,
-            "preprocess_params": preprocess_params,
+            "input_subdir":        str(pre_sub) if pre_sub else None,
+            "dest_out_dir":        str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "masks_out_dir":       str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "blocks":              piv_vars.BLOCKS,
+            "block_size":          piv_vars.BLOCK_SIZE,
+            "skip_inter":          piv_vars.SKIP_INTER,
+            "skip_final":          piv_vars.SKIP_FINAL,
+            "skip_first_images":   skip_first_images,
+            "delete_existing":     piv_vars.DELETE_EXISTING_PRE,
+            "preprocess_params":   preprocess_params,
             "use_temporal_regions": piv_vars.USE_TEMPORAL_REGIONS and temporal_regions_config is not None,
-            "temporal_regions": temporal_regions_config,
+            "temporal_regions":    temporal_regions_config,
         },
 
         "masks": {
-            "model_path": str(piv_model_path),
-            "images_dir": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "output_dir": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
-            "conf_thresh": piv_vars.MASK_CONF,
-            "device": piv_vars.MASK_DEVICE,
-            "invert_mask": piv_vars.INVERT_MASK,
-            "delete_existing": piv_vars.DELETE_EXISTING_MASKS,
+            "model_path":         str(piv_model_path),
+            "images_dir":         str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "output_dir":         str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "conf_thresh":        piv_vars.MASK_CONF,
+            "device":             piv_vars.MASK_DEVICE,
+            "invert_mask":        piv_vars.INVERT_MASK,
+            "delete_existing":    piv_vars.DELETE_EXISTING_MASKS,
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
-            "apply_static_mask": bool(prof["apply_static_mask"]),
-            "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
-            "imgsz": int(prof["width_px"]),   # ← AGREGAR
+            "apply_static_mask":  bool(prof["apply_static_mask"]),
+            "fixed_mask_path":    str(fixed_mask_path) if fixed_mask_path else None,
+            "imgsz":              int(prof["width_px"]),
         },
 
         "piv": {
-            "images_dir": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_dir": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
-            "out_dir": str(piv_vars.RESULTS_PIV_ROOT / pre_name) if pre_sub else None,
-            "dt_ms": prof["dt_ms"],
-            "px_per_mm": prof["px_per_mm"],
-            "width_px": prof["width_px"],
-            "height_px": prof["height_px"],
+            "images_dir":         str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "masks_dir":          str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "out_dir":            str(piv_vars.RESULTS_PIV_ROOT / pre_name) if pre_sub else None,
+            "dt_ms":              prof["dt_ms"],
+            "px_per_mm":          prof["px_per_mm"],
+            "width_px":           prof["width_px"],
+            "height_px":          prof["height_px"],
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
-            "apply_static_mask": bool(prof["apply_static_mask"]),
-            "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
-            "window_sizes": piv_params['window_sizes'],        # ← DINÁMICO
-            "overlaps": piv_params['overlaps'],                # ← DINÁMICO
+            "apply_static_mask":  bool(prof["apply_static_mask"]),
+            "fixed_mask_path":    str(fixed_mask_path) if fixed_mask_path else None,
+            "window_sizes":       piv_params['window_sizes'],
+            "overlaps":           piv_params['overlaps'],
             "search_area_factor": piv_vars.SEARCH_AREA_FACTOR,
-            "sig2noise_method": piv_vars.SIG2NOISE_METHOD,
-            "mask_threshold": piv_vars.MASK_THRESHOLD,
-            "keep_percentile": piv_params['keep_percentile'],  # ← DINÁMICO
-            "lm_kernel": piv_vars.LM_KERNEL,
-            "lm_thresh": piv_vars.LM_THRESH,
-            "lm_eps": piv_vars.LM_EPS,
-            "show_viewers": piv_vars.SHOW_VIEWERS,
-            "clear_txt_before_export": piv_vars.CLEAR_TXT
+            "sig2noise_method":   piv_vars.SIG2NOISE_METHOD,
+            "mask_threshold":     piv_vars.MASK_THRESHOLD,
+            "keep_percentile":    piv_params['keep_percentile'],
+            "lm_kernel":          piv_vars.LM_KERNEL,
+            "lm_thresh":          piv_vars.LM_THRESH,
+            "lm_eps":             piv_vars.LM_EPS,
+            "show_viewers":       piv_vars.SHOW_VIEWERS,
+            "clear_txt_before_export": piv_vars.CLEAR_TXT,
         },
 
+        # ── PTV ──────────────────────────────────────────────────
         "ptv": {
-            "images_dir": str(ptv_sub) if ptv_sub else None,
-            "out_dir": str(ptv_vars.RESULTS_PTV_ROOT / ptv_name) if ptv_sub else None,
-            "weights_path": str(ptv_vars.YOLO_TRACK_MODEL),
-            "runs_segment_dir": str(ptv_vars.RUNS_SEGMENT_DIR),
-            "fps": prof["fps"],
-            "width_px": prof["width_px"],
-            "height_px": prof["height_px"],
+            "images_dir":         str(ptv_sub) if ptv_sub else None,
+            "out_dir":            str(ptv_vars.RESULTS_PTV_ROOT / ptv_name) if ptv_sub else None,
+            "weights_path":       str(ptv_vars.YOLO_TRACK_MODEL),
+            "runs_segment_dir":   str(ptv_vars.RUNS_SEGMENT_DIR),
+            "device":             ptv_vars.DEVICE_PTV,
+            "fps":                prof["fps"],
+            "width_px":           prof["width_px"],
+            "height_px":          prof["height_px"],
             "apply_dynamic_mask": bool(prof["apply_dynamic_mask"]),
-            "apply_static_mask": bool(prof["apply_static_mask"]),
-            "fixed_mask_path": str(fixed_mask_path) if fixed_mask_path else None,
-            "max_images": ptv_vars.MAX_IMAGES,
-            "alpha": ptv_vars.ALPHA,
-            "beta": ptv_vars.BETA,
-            "gamma": ptv_vars.GAMMA,
-            "gate_x_px": ptv_vars.GATE_X,
-            "gate_y_px": ptv_vars.GATE_Y,
-            "gate_angle_deg": ptv_vars.GATE_ANGLE,
-            "conf": ptv_vars.CONF_TRACK,
-            "min_frames_keep": ptv_vars.MIN_FRAMES_KEEP,
-            "annotate": ptv_vars.ANNOTATE,
-            "preprocess_params": ptv_preprocess_params,
+            "apply_static_mask":  bool(prof["apply_static_mask"]),
+            "fixed_mask_path":    str(fixed_mask_path) if fixed_mask_path else None,
+            "max_images":         ptv_vars.MAX_IMAGES,
+            "preprocess_params":  ptv_preprocess_params,
+
+            # Filtro ABG
+            "alpha":              ptv_vars.ALPHA,
+            "beta":               ptv_vars.BETA,
+            "gamma":              ptv_vars.GAMMA,
+            "conf":               ptv_vars.CONF_TRACK,
+            "min_frames_keep":    ptv_vars.MIN_FRAMES_KEEP,
+            "annotate":           ptv_vars.ANNOTATE,
+
+            # Gate (usado solo por annotate_frame para dibujar el rectángulo)
+            "gate_x_px":          ptv_vars.GATE_X,
+            "gate_y_px":          ptv_vars.GATE_Y,
+            "gate_angle_deg":     ptv_vars.GATE_ANGLE,
+
+            # Similarity Search Scheme
+            "sim_threshold":      ptv_vars.SIM_THRESHOLD,
+            "max_dist_px":        ptv_vars.MAX_DIST_PX,
+            "feat_weights":       list(ptv_vars.FEAT_WEIGHTS),
+            "l_ref_px":           ptv_vars.L_REF_PX,
+
+            # SAHI inference (coincide con parámetros de entrenamiento)
+            "sahi_scale_factor":  ptv_vars.SAHI_SCALE_FACTOR,
+            "sahi_tile_size":     ptv_vars.SAHI_TILE_SIZE,
+            "sahi_overlap_ratio": ptv_vars.SAHI_OVERLAP_RATIO,
+            "sahi_iou_threshold": ptv_vars.SAHI_IOU_THRESHOLD,
+            "viz_tail_length":    ptv_vars.VIZ_TAIL_LENGTH,
+            "viz_update_every":   ptv_vars.VIZ_UPDATE_EVERY,
         },
 
         "cleanup": {
-            "processed_dir_to_delete": str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_dir_to_delete": str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "processed_dir_to_delete":    str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "masks_dir_to_delete":        str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
             "delete_processed_subfolders": piv_vars.DELETE_PROCESSED_SUBFOLDERS,
-            "delete_predict_folders": ptv_vars.DELETE_PREDICT_FOLDERS,
-            "runs_segment_dir": str(ptv_vars.RUNS_SEGMENT_DIR)
-        }
+            "delete_predict_folders":     ptv_vars.DELETE_PREDICT_FOLDERS,
+            "runs_segment_dir":           str(ptv_vars.RUNS_SEGMENT_DIR),
+        },
     }
 
     CFG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ============================================================
-# PIPELINES
+# PIPELINES  (sin cambios)
 # ============================================================
 
 def run_one_piv_folder(pre_sub: Path) -> None:
     cam, carbopol, prof, skip_images = cam_profile_for_folder(pre_sub)
-    
-    # **NUEVO: Verificar si debe procesarse**
     info = parse_subfolder_name(pre_sub.name)
     if info:
         mezcla = f"M{info['mezcla']}"
-        toma = int(info['toma'])
-        
-        if not should_process_folder(mezcla, toma, carbopol):
+        toma   = int(info['toma'])
+        metodo = info['metodo']   # extraído del nombre → "piv"
+        if not should_process_folder(mezcla, toma, carbopol, metodo=metodo):
             print(f"[SKIP] Carpeta omitida: {pre_sub.name}", flush=True)
-            return  # ← Salir sin procesar
-
-    # Validar máscara estática
+            return
     if prof["apply_static_mask"]:
         fmp = Path(prof["fixed_mask_path"])
         if not fmp.exists():
-            raise FileNotFoundError(
-                f"apply_static_mask=True pero no existe máscara fija para cam={cam}: {fmp}"
-            )
-
-    # Validar modelo PIV
+            raise FileNotFoundError(f"apply_static_mask=True pero no existe máscara para cam={cam}: {fmp}")
     piv_model = piv_model_path_for_cam(cam)
     if not piv_model.exists():
         raise FileNotFoundError(f"No existe modelo PIV para cam={cam}: {piv_model}")
-
     write_cfg(pre_sub=pre_sub, ptv_sub=None, cam=cam, carbopol=carbopol, prof=prof, skip_first_images=skip_images)
-
     print(f"\n[PIPE] === PIV: {pre_sub.name} (cam={cam}, car={carbopol}, skip={skip_images}) ===", flush=True)
     print(f"[PIPE] Modelo: {piv_model.name}", flush=True)
-
     print("[PIPE] 1) PRE + MASKS", flush=True)
     run_env(ENV_YOLO, PREPROCESS_SCRIPT)
-
     print(f"[PIPE] 2) PIV -> {piv_vars.RESULTS_PIV_ROOT / pre_sub.name}", flush=True)
     run_env(ENV_PIV, PIV_SCRIPT)
-
     print("[PIPE] 3) CLEANUP", flush=True)
     run_any(CLEANUP_SCRIPT)
-
     print(f"[OK] PIV completado: {pre_sub.name}\n", flush=True)
 
 
 def run_one_ptv_folder(ptv_sub: Path) -> None:
-    cam, carbopol, prof, _ = cam_profile_for_folder(ptv_sub)
-    
-    # **NUEVO: Verificar si debe procesarse**
+    cam, carbopol, prof, skip_images = cam_profile_for_folder(ptv_sub)
     info = parse_subfolder_name(ptv_sub.name)
     if info:
         mezcla = f"M{info['mezcla']}"
-        toma = int(info['toma'])
-        
-        if not should_process_folder(mezcla, toma, carbopol):
+        toma   = int(info['toma'])
+        metodo = info['metodo']   # extraído del nombre → "ptv"
+        if not should_process_folder(mezcla, toma, carbopol, metodo=metodo):
             print(f"[SKIP] Carpeta omitida: {ptv_sub.name}", flush=True)
-            return  # ← Salir sin procesar
-
+            return
     if prof["apply_static_mask"]:
         fmp = Path(prof["fixed_mask_path"])
         if not fmp.exists():
-            raise FileNotFoundError(
-                f"apply_static_mask=True pero no existe máscara fija para cam={cam}: {fmp}"
-            )
-
-    write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, carbopol=carbopol, prof=prof, skip_first_images=0)
-
-    print(f"\n[PIPE] === PTV: {ptv_sub.name} (cam={cam}, car={carbopol}) ===", flush=True)
-
+            raise FileNotFoundError(f"apply_static_mask=True pero no existe máscara para cam={cam}: {fmp}")
+    write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, carbopol=carbopol, prof=prof, skip_first_images=skip_images)
+    print(f"\n[PIPE] === PTV: {ptv_sub.name} (cam={cam}, car={carbopol}, skip={skip_images}) ===", flush=True)
     print(f"[PIPE] PTV -> {ptv_vars.RESULTS_PTV_ROOT / ptv_sub.name}", flush=True)
     run_env(ENV_YOLO, PTV_SCRIPT)
-
     print(f"[OK] PTV completado: {ptv_sub.name}\n", flush=True)
 
 
 # ============================================================
-# MAIN
+# MAIN  (sin cambios)
 # ============================================================
 
 def main() -> None:
-    # Validaciones iniciales
     if RUN_MODE in ("piv", "both"):
         if not piv_vars.PRE_BASE_DIR.exists():
             raise FileNotFoundError(f"PRE_BASE_DIR no existe: {piv_vars.PRE_BASE_DIR}")
         if not piv_vars.PIV_MODELS_DIR.exists():
             raise FileNotFoundError(f"PIV_MODELS_DIR no existe: {piv_vars.PIV_MODELS_DIR}")
-
     if any(CAM_PROFILES[c]["apply_static_mask"] for c in CAM_PROFILES):
         if not FIX_MASKS_DIR.exists():
             raise FileNotFoundError(f"FixMasks dir no existe: {FIX_MASKS_DIR}")
@@ -639,7 +497,6 @@ def main() -> None:
             else:
                 raise RuntimeError(msg)
 
-    # Ejecución
     if RUN_MODE == "piv":
         print(f"[PIPE] PIV ONLY | carpetas={len(piv_folders)}", flush=True)
         for f in piv_folders:

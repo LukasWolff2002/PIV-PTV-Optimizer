@@ -40,13 +40,26 @@ class TrackingConfig:
     annotate: bool
 
     device: str | int | None = None
-    max_misses: int = 2
+    max_misses: int = 0   # 0 = track termina inmediatamente si no es detectado
 
     # ── Similarity Search Scheme ────────────────────────────────
     sim_threshold: float = 0.85
     max_dist_px: float = 80.0
     feat_weights: tuple = (1.0, 1.0, 0.5, 1.5, 1.5)
     l_ref_px: float = 101.4   # 13 mm × 7.8 px/mm
+
+    # ── SAHI inference ──────────────────────────────────────────
+    sahi_scale_factor: int   = 4
+    sahi_tile_size: int      = 640
+    sahi_overlap_ratio: float = 0.5
+    sahi_iou_threshold: float = 0.3
+
+    # ── Skip de imágenes iniciales (desde Google Sheet) ──────────
+    skip_first_images: int = 0
+
+    # ── Visualizador ─────────────────────────────────────────────
+    viz_tail_length: int  = 0   # 0 = trayectoria completa; N = últimos N frames
+    viz_update_every: int = 1   # refrescar cada N frames (subir a 5 si va lento)
 
     @property
     def dt(self) -> float:
@@ -81,12 +94,19 @@ def build_tracking_config(cfg: dict) -> TrackingConfig:
         conf=float(ptv["conf"]),
         min_frames_keep=int(ptv["min_frames_keep"]),
         annotate=bool(ptv.get("annotate", False)),
-        device=None,
-        max_misses=2,
+        device=ptv.get("device", None),
+        max_misses=int(ptv.get("max_misses", 0)),
         sim_threshold=float(ptv.get("sim_threshold", 0.85)),
         max_dist_px=float(ptv.get("max_dist_px", 80.0)),
         feat_weights=tuple(ptv.get("feat_weights", [1.0, 1.0, 0.5, 1.5, 1.5])),
         l_ref_px=float(ptv.get("l_ref_px", 101.4)),
+        sahi_scale_factor=int(ptv.get("sahi_scale_factor", 4)),
+        sahi_tile_size=int(ptv.get("sahi_tile_size", 640)),
+        sahi_overlap_ratio=float(ptv.get("sahi_overlap_ratio", 0.5)),
+        sahi_iou_threshold=float(ptv.get("sahi_iou_threshold", 0.3)),
+        viz_tail_length=int(ptv.get("viz_tail_length", 0)),
+        viz_update_every=int(ptv.get("viz_update_every", 1)),
+        skip_first_images=int(cfg.get("meta", {}).get("skip_first_images", 0)),
     )
 
 

@@ -3,6 +3,7 @@ PIV/Tomas/
 PTV/Codes/Segmentation-Models/yolo11s-seg.pt
 PTV/Tomas/
 ResultadosPIV/
+ResultadosPTV/
 Masks/
 TomasProcesadas/
 pipeline_config.json

@@ -13,12 +13,10 @@ import json
 import sys
 from pathlib import Path
 
-# ── Resolver PROJECT_ROOT y añadir al path ──────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# ── Importar desde PTVCode ───────────────────────────────────
 from PTV.Codes.PTVCode.config import build_tracking_config, validate_config
 from PTV.Codes.PTVCode.runner import run_ptv
 

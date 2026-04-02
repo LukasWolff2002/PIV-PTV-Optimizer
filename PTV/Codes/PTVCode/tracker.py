@@ -285,7 +285,10 @@ class Tracker:
         for tr in self.active_tracks:
             tr.state = predict_state_abg(tr.state, dt)
 
-        # 2) Asignación vectorizada por similitud coseno
+        # 2) Asignación global por similitud coseno
+        #    Se calcula la matriz completa S(T×N) antes de asignar cualquier par,
+        #    garantizando que cada track compite por la mejor detección disponible
+        #    considerando a TODAS las fibras simultáneamente.
         assignments = self._assign(self.active_tracks, detections)
 
         assigned_tracks: set[int] = {ti for ti, _ in assignments}
@@ -314,7 +317,10 @@ class Tracker:
                 det_id=det.det_id,
             ))
 
-        # 4) Gestión de misses
+        # 4) Tracks no asignados: miss
+        #    Si max_misses == 0 (default), el track termina inmediatamente
+        #    cuando no es detectado — no se extrapola posición.
+        #    Si max_misses > 0, se toleran N frames sin detección.
         survivors: list[Track] = []
         for ti, tr in enumerate(self.active_tracks):
             if ti not in assigned_tracks:
@@ -328,7 +334,7 @@ class Tracker:
                 survivors.append(tr)
         self.active_tracks = survivors
 
-        # 5) Nuevos tracks para detecciones no asignadas
+        # 5) Nuevos tracks para detecciones no asignadas a ningún track existente
         for di, det in enumerate(detections):
             if di not in assigned_dets:
                 self.active_tracks.append(self._new_track(det, image_name))

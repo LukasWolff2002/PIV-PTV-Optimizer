@@ -5,20 +5,17 @@ from pathlib import Path
 # VARIABLES Y PARÁMETROS PTV
 # ============================================================
 
-# Obtener la raíz del proyecto (asumiendo que este archivo está en RunCode/)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # ---------- DIRECTORIOS PTV ----------
-PTV_BASE_DIR = PROJECT_ROOT / "PTV" / "Tomas"
+PTV_BASE_DIR     = PROJECT_ROOT / "PTV" / "Tomas"
 RESULTS_PTV_ROOT = PROJECT_ROOT / "ResultadosPTV"
 RUNS_SEGMENT_DIR = PROJECT_ROOT / "runs" / "segment"
 
-# ---------- FILTRO PARA SELECCIONAR   CARPETAS ----------
-PTV_METODO = "ptv"  # Filtra carpetas que terminen en "-ptv"
+# ---------- FILTRO PARA SELECCIONAR CARPETAS ----------
+PTV_METODO = "ptv"
 
 # ---------- PREPROCESAMIENTO PTV ----------
-# Parámetros de preprocesamiento por cámara (NO MODIFICAR FRECUENTEMENTE)
-
 CAM_PREPROCESS_PARAMS_PTV = {
     'cam1': {
         'roi_enabled': False,
@@ -97,20 +94,62 @@ CAM_PREPROCESS_PARAMS_PTV = {
         'max_intensity': 0.8289,
     },
 }
+
 # ---------- MODELO YOLO TRACKING ----------
 YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
+DEVICE_PTV = 0   # 0 = cuda:0, "cpu" = sin GPU
 
-# ---------- PARÁMETROS PTV ----------
-MAX_IMAGES = 100
-ALPHA = 0.95
-BETA = 0.95
-GAMMA = 0.05
-GATE_X = 10
-GATE_Y = 10
-GATE_ANGLE = 5
-CONF_TRACK = 0.1
+# ---------- PARÁMETROS PTV (FILTRO ABG) ----------
+MAX_IMAGES      = 10
+ALPHA           = 0.95
+BETA            = 0.95
+GAMMA           = 0.05
+CONF_TRACK      = 0.1
 MIN_FRAMES_KEEP = 20
-ANNOTATE = True
+ANNOTATE        = True
+
+# ---------- GATE ESPACIAL (usado como salvaguarda en similarity search) ----------
+# GATE_X y GATE_Y se mantienen por compatibilidad con annotate_frame,
+# pero el tracker ya no los usa como filtro secuencial.
+GATE_X     = 10
+GATE_Y     = 10
+GATE_ANGLE = 5
+
+# ---------- SIMILARITY SEARCH SCHEME ----------
+# Vector de características por fibra: [cos(2θ), sin(2θ), L/L_ref, cx/W, cy/H]
+# Usar cos(2θ)/sin(2θ) en vez de cos(θ)/sin(θ) resuelve la simetría bidireccional:
+# una fibra a 0° y la misma a 180° producen el mismo vector.
+
+SIM_THRESHOLD = 0.85
+# Similitud coseno mínima para aceptar un match.
+# Rango [0, 1]. Subir para matches más estrictos, bajar si hay pocos tracks.
+
+MAX_DIST_PX = 80.0
+# Gate espacial duro (distancia Euclidiana, píxeles).
+# Candidatos más lejos que este valor se rechazan independiente de la similitud.
+# Ajustar según la velocidad máxima esperada de las fibras entre frames.
+
+FEAT_WEIGHTS = (1.0, 1.0, 0.5, 1.5, 1.5)
+# Pesos del vector de características: (w_cos2θ, w_sin2θ, w_largo, w_cx, w_cy).
+# Pesos mayores = más influencia en la similitud.
+# Subir w_cx / w_cy para priorizar posición; subir w_cos/w_sin para priorizar ángulo.
+
+L_REF_PX = 101.4
+# Largo de referencia para normalizar length_px.
+# Default: 13 mm × 7.8 px/mm = 101.4 px (fibra completa a escala original).
 
 # ---------- CLEANUP ----------
 DELETE_PREDICT_FOLDERS = False
+
+# ---------- VISUALIZADOR EN TIEMPO REAL ----------
+VIZ_TAIL_LENGTH  = 0    # 0 = trayectoria completa, N = últimos N frames
+VIZ_UPDATE_EVERY = 1    # refrescar visualizador cada N frames (1 = siempre)
+
+# ---------- SAHI INFERENCE ----------
+SAHI_SCALE_FACTOR  = 4
+SAHI_TILE_SIZE     = 640
+SAHI_OVERLAP_RATIO = 0.5
+SAHI_IOU_THRESHOLD = 0.3
+
+# ---------- VISUALIZADOR ----------
+VIZ_TAIL_LENGTH = 0   # 0 = trayectoria completa; N = últimos N frames visibles
