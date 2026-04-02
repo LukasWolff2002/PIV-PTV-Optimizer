@@ -61,6 +61,9 @@ class TrackingConfig:
     viz_tail_length: int  = 0   # 0 = trayectoria completa; N = últimos N frames
     viz_update_every: int = 1   # refrescar cada N frames (subir a 5 si va lento)
 
+    # ── Guardar imágenes ─────────────────────────────────────────
+    save_images: bool = True    # False = no guarda annotations/ ni tracks/
+
     @property
     def dt(self) -> float:
         return 1.0 / self.fps
@@ -107,6 +110,7 @@ def build_tracking_config(cfg: dict) -> TrackingConfig:
         viz_tail_length=int(ptv.get("viz_tail_length", 0)),
         viz_update_every=int(ptv.get("viz_update_every", 1)),
         skip_first_images=int(cfg.get("meta", {}).get("skip_first_images", 0)),
+        save_images=bool(ptv.get("save_images", True)),
     )
 
 

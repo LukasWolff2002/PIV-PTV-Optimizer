@@ -383,11 +383,14 @@ def write_cfg(
             "gate_y_px":          ptv_vars.GATE_Y,
             "gate_angle_deg":     ptv_vars.GATE_ANGLE,
 
-            # Similarity Search Scheme
-            "sim_threshold":      ptv_vars.SIM_THRESHOLD,
-            "max_dist_px":        ptv_vars.MAX_DIST_PX,
+            # Tracker
+            "max_misses":         ptv_vars.MAX_MISSES,
+
+            # Similarity Search Scheme — parámetros por cámara
+            "sim_threshold":      ptv_vars.get_tracking_params(cam)["sim_threshold"],
+            "max_dist_px":        ptv_vars.get_max_dist_px(cam, CAM_PROFILES),
             "feat_weights":       list(ptv_vars.FEAT_WEIGHTS),
-            "l_ref_px":           ptv_vars.L_REF_PX,
+            "l_ref_px":           ptv_vars.get_l_ref_px(cam, CAM_PROFILES),
 
             # SAHI inference (coincide con parámetros de entrenamiento)
             "sahi_scale_factor":  ptv_vars.SAHI_SCALE_FACTOR,
@@ -396,6 +399,9 @@ def write_cfg(
             "sahi_iou_threshold": ptv_vars.SAHI_IOU_THRESHOLD,
             "viz_tail_length":    ptv_vars.VIZ_TAIL_LENGTH,
             "viz_update_every":   ptv_vars.VIZ_UPDATE_EVERY,
+
+            # Guardar imágenes
+            "save_images":        ptv_vars.SAVE_IMAGES,
         },
 
         "cleanup": {
