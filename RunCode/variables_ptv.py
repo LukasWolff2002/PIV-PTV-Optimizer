@@ -76,14 +76,14 @@ YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "bes
 DEVICE_PTV = 0   # 0 = cuda:0 | "cpu" = sin GPU
 
 # ---------- PARÁMETROS PTV ----------
-MAX_IMAGES      = 100
+MAX_IMAGES      = 2200
 ALPHA           = 0.95   # corrección de posición (filtro ABG)
 BETA            = 0.95   # corrección de velocidad
 GAMMA           = 0.05   # corrección de aceleración
 CONF_TRACK      = 0.1    # confianza mínima del detector YOLO
-MIN_FRAMES_KEEP = 3      # mínimo de frames para exportar un track
+MIN_FRAMES_KEEP = 5      # mínimo de frames para exportar un track
 ANNOTATE        = True
-MAX_MISSES      = 0      # 0 = track termina inmediatamente si no se detecta
+MAX_MISSES      = 2      # 0 = track termina inmediatamente si no se detecta
                          # 1-3 = tolera N frames sin detección (oclusiones)
 
 # ---------- GUARDAR IMÁGENES ----------
@@ -125,17 +125,17 @@ FEAT_WEIGHTS = (1.0, 1.0, 0.3, 2.0, 2.0)
 #   A 660 fps (cam4) el movimiento es aún menor.
 
 CAM_TRACKING_PARAMS = {
-    1: dict(sim_threshold=0.75, max_dist_mm=5.0),
-    2: dict(sim_threshold=0.75, max_dist_mm=5.0),
-    3: dict(sim_threshold=0.75, max_dist_mm=5.0),
-    4: dict(sim_threshold=0.75, max_dist_mm=3.0),   # 660 fps → menos movimiento
+    1: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    2: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    3: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    4: dict(sim_threshold=0.99, max_dist_mm=2.0),   # 660 fps → menos movimiento
 }
 
 # ---------- SAHI INFERENCE ----------
 # Deben coincidir con los parámetros usados en entrenamiento (train_yolo26.py)
-SAHI_SCALE_FACTOR  = 4      # upscale ×4 antes de tilear
+SAHI_SCALE_FACTOR  = 2      # upscale ×4 antes de tilear
 SAHI_TILE_SIZE     = 640    # tamaño del tile en px
-SAHI_OVERLAP_RATIO = 0.5    # solapamiento entre tiles
+SAHI_OVERLAP_RATIO = 0.1    # solapamiento entre tiles
 SAHI_IOU_THRESHOLD = 0.3    # NMS entre tiles solapados
 
 # ---------- VISUALIZADOR EN TIEMPO REAL ----------

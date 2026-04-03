@@ -187,16 +187,22 @@ class Tracker:
         """
         Máscara booleana (T×N): True si la distancia Euclidiana
         entre track i y detección j es ≤ max_dist_px.
+
+        Vectorizado con broadcasting NumPy — O(T×N) sin loop Python.
         """
         T, N = len(tracks), len(dets)
-        mask = np.zeros((T, N), dtype=bool)
-        for i, tr in enumerate(tracks):
-            for j, det in enumerate(dets):
-                dx = tr.state.x - det.cx
-                dy = tr.state.y - det.cy
-                if math.sqrt(dx*dx + dy*dy) <= self.max_dist_px:
-                    mask[i, j] = True
-        return mask
+        if T == 0 or N == 0:
+            return np.zeros((T, N), dtype=bool)
+
+        # Posiciones de tracks (T, 2) y detecciones (N, 2)
+        trk_xy = np.array([[tr.state.x, tr.state.y] for tr in tracks], dtype=np.float64)
+        det_xy = np.array([[d.cx, d.cy] for d in dets], dtype=np.float64)
+
+        # Broadcasting: (T, 1, 2) - (1, N, 2) → (T, N, 2) → dist (T, N)
+        diff = trk_xy[:, np.newaxis, :] - det_xy[np.newaxis, :, :]
+        dist = np.sqrt((diff ** 2).sum(axis=2))
+
+        return dist <= self.max_dist_px
 
     def _assign(
         self,

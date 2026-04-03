@@ -55,11 +55,11 @@ def annotate_frame(
         rec = recs[-1]
         cx, cy = int(round(rec.x)), int(round(rec.y))
         cv2.circle(canvas_bgr, (cx, cy), 3, (0, 255, 0), -1)
-        cv2.putText(
-            canvas_bgr, f"ID {tr.track_id}",
-            (cx + 6, cy - 6),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, cv2.LINE_AA,
-        )
+        #cv2.putText(
+        #    canvas_bgr, f"ID {tr.track_id}",
+        #    (cx + 6, cy - 6),
+        #    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1, cv2.LINE_AA,
+        #)
         gx, gy = int(round(gate_x_px)), int(round(gate_y_px))
         cv2.rectangle(canvas_bgr, (cx - gx, cy - gy), (cx + gx, cy + gy), (255, 0, 255), 1)
 

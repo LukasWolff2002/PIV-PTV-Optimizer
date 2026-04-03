@@ -3,6 +3,7 @@ visualizer.py
 =============
 Genera un visualizador HTML interactivo con slider temporal,
 trayectorias de tracks y vectores de velocidad.
+Versión: Control por FPS directos.
 """
 from __future__ import annotations
 import base64
@@ -26,6 +27,7 @@ def create_interactive_visualizer(
     """
     Crea visualizer.html con:
     - Slider de frames con play/pause y atajos de teclado
+    - Control de velocidad basado en FPS reales
     - Trayectorias coloreadas por track ID
     - Vectores de velocidad opcionales
     - Panel de estadísticas y lista de tracks activos
@@ -37,6 +39,7 @@ def create_interactive_visualizer(
 
     print(f"[PTV] Generando visualizador con {len(ann_images)} frames...", flush=True)
 
+    # 1. Preparación de imágenes en Base64
     frames_data = []
     for img_path in ann_images:
         img = cv2.imread(str(img_path))
@@ -49,16 +52,20 @@ def create_interactive_visualizer(
             "data": f"data:image/png;base64,{img_b64}",
         })
 
+    # 2. Reestructuración de Tracks por Frame
     tracks_by_frame: dict[int, list] = {}
     for track in tracks:
         for rec in track.history:
             fi = rec.frame_idx
             if fi not in tracks_by_frame:
                 tracks_by_frame[fi] = []
+            
+            # Guardamos la historia hasta el frame actual
             history_pts = [
                 {"x": r.x, "y": r.y}
                 for r in track.history if r.frame_idx <= fi
             ]
+            
             tracks_by_frame[fi].append({
                 "track_id": track.track_id,
                 "x": rec.x,
@@ -72,6 +79,7 @@ def create_interactive_visualizer(
     n_frames = len(frames_data)
     first_name = frames_data[0]["name"] if frames_data else ""
 
+    # 3. Generación del HTML
     html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -137,19 +145,22 @@ button.active{{background:#00d4ff;color:#1a1a1a}}
     <button id="bNext">►</button>
   </div>
   <div class="ctrl" style="margin-top:12px">
-    <label>Velocidad: <span id="spVal">1x</span></label>
-    <input type="range" id="spSlider" min="0.25" max="4" value="1" step="0.25">
+    <label>Velocidad de reproducción: <span id="fpsVal" class="val">{int(fps)}</span> FPS</label>
+    <input type="range" id="fpsSlider" min="1" max="60" value="{int(fps)}" step="1">
   </div>
 </div>
 <script>
 const FD={json.dumps(frames_data)};
 const TBF={json.dumps(tracks_by_frame)};
-const FPS={fps};
+const ORIG_FPS={fps};
 const cv=document.getElementById('cv');
 const ctx=cv.getContext('2d');
-let cur=0,playing=false,iv=null,spd=1;
+let cur=0, playing=false, iv=null;
+let targetFPS = {fps};
+
 const tc={{}};
 function tcolor(id){{if(!tc[id]){{const h=(id*137.508)%360;tc[id]=`hsl(${{h}},70%,60%)`;}}return tc[id];}}
+
 function draw(fi){{
   ctx.clearRect(0,0,cv.width,cv.height);
   if(fi>=FD.length)return;
@@ -162,66 +173,101 @@ function draw(fi){{
     const showV=document.getElementById('chkVec').checked;
     const lw=parseFloat(document.getElementById('lw').value);
     const tl=parseInt(document.getElementById('tl').value);
-    if(showT){{tracks.forEach(t=>{{
-      let h=t.history;
-      if(tl>0&&h.length>tl)h=h.slice(-tl);
-      if(h.length<2)return;
-      ctx.strokeStyle=tcolor(t.track_id);ctx.lineWidth=lw;
-      ctx.beginPath();ctx.moveTo(h[0].x,h[0].y);
-      for(let i=1;i<h.length;i++)ctx.lineTo(h[i].x,h[i].y);
-      ctx.stroke();
-    }});}}
+    
+    if(showT){{
+      tracks.forEach(t=>{{
+        let h=t.history;
+        if(tl>0&&h.length>tl)h=h.slice(-tl);
+        if(h.length<2)return;
+        ctx.strokeStyle=tcolor(t.track_id);ctx.lineWidth=lw;
+        ctx.beginPath();ctx.moveTo(h[0].x,h[0].y);
+        for(let i=1;i<h.length;i++)ctx.lineTo(h[i].x,h[i].y);
+        ctx.stroke();
+      }});
+    }}
+    
     tracks.forEach(t=>{{
       const c=tcolor(t.track_id);
       ctx.fillStyle=c;ctx.beginPath();ctx.arc(t.x,t.y,5,0,Math.PI*2);ctx.fill();
-      if(showV){{const vm=Math.sqrt(t.vx*t.vx+t.vy*t.vy);if(vm>0.1){{
-        const sc=2,dx=t.vx*sc,dy=t.vy*sc,ang=Math.atan2(dy,dx),as=8;
-        ctx.strokeStyle=c;ctx.lineWidth=2;
-        ctx.beginPath();ctx.moveTo(t.x,t.y);ctx.lineTo(t.x+dx,t.y+dy);ctx.stroke();
-        ctx.beginPath();ctx.moveTo(t.x+dx,t.y+dy);
-        ctx.lineTo(t.x+dx-as*Math.cos(ang-Math.PI/6),t.y+dy-as*Math.sin(ang-Math.PI/6));
-        ctx.moveTo(t.x+dx,t.y+dy);
-        ctx.lineTo(t.x+dx-as*Math.cos(ang+Math.PI/6),t.y+dy-as*Math.sin(ang+Math.PI/6));
-        ctx.stroke();
-      }}}}
+      if(showV){{
+        const vm=Math.sqrt(t.vx*t.vx+t.vy*t.vy);
+        if(vm>0.1){{
+          const sc=2,dx=t.vx*sc,dy=t.vy*sc,ang=Math.atan2(dy,dx),as=8;
+          ctx.strokeStyle=c;ctx.lineWidth=2;
+          ctx.beginPath();ctx.moveTo(t.x,t.y);ctx.lineTo(t.x+dx,t.y+dy);ctx.stroke();
+          ctx.beginPath();ctx.moveTo(t.x+dx,t.y+dy);
+          ctx.lineTo(t.x+dx-as*Math.cos(ang-Math.PI/6),t.y+dy-as*Math.sin(ang-Math.PI/6));
+          ctx.moveTo(t.x+dx,t.y+dy);
+          ctx.lineTo(t.x+dx-as*Math.cos(ang+Math.PI/6),t.y+dy-as*Math.sin(ang+Math.PI/6));
+          ctx.stroke();
+        }}
+      }}
       if(showI){{ctx.fillStyle=c;ctx.font='bold 12px monospace';ctx.fillText('ID '+t.track_id,t.x+8,t.y-8);}}
     }});
-    const tk=TBF[fi]||[];
+    
     document.getElementById('sFr').textContent=fi+1;
-    document.getElementById('sTr').textContent=tk.length;
-    const av=tk.length?tk.reduce((s,t)=>s+Math.sqrt(t.vx*t.vx+t.vy*t.vy),0)/tk.length:0;
+    document.getElementById('sTr').textContent=tracks.length;
+    const av=tracks.length?tracks.reduce((s,t)=>s+Math.sqrt(t.vx*t.vx+t.vy*t.vy),0)/tracks.length:0;
     document.getElementById('sVel').textContent=av.toFixed(1)+' px/s';
     document.getElementById('tList').innerHTML='<strong style="font-size:12px;color:#00d4ff">Tracks visibles</strong>'+
-      tk.map(t=>`<div class="track-item"><span><span class="dot" style="background:${{tcolor(t.track_id)}}"></span>Track ${{t.track_id}}</span><span style="color:#b0b0b0">${{Math.sqrt(t.vx*t.vx+t.vy*t.vy).toFixed(1)}} px/s</span></div>`).join('');
+      tracks.map(t=>`<div class="track-item"><span><span class="dot" style="background:${{tcolor(t.track_id)}}"></span>Track ${{t.track_id}}</span><span style="color:#b0b0b0">${{Math.sqrt(t.vx*t.vx+t.vy*t.vy).toFixed(1)}} px/s</span></div>`).join('');
   }};
   img.src=FD[fi].data;
 }}
+
 function upd(fi){{
   cur=fi;
   document.getElementById('fSlider').value=fi;
   document.getElementById('fLabel').textContent=(fi+1)+' / '+FD.length;
   document.getElementById('fName').textContent=FD[fi].name;
-  document.getElementById('tLabel').textContent=(fi/FPS).toFixed(2)+' s';
+  document.getElementById('tLabel').textContent=(fi/ORIG_FPS).toFixed(2)+' s';
   draw(fi);
 }}
+
 function play(){{
-  if(playing){{playing=false;document.getElementById('bPlay').textContent='▶ Play';document.getElementById('bPlay').classList.remove('active');clearInterval(iv);return;}}
-  playing=true;document.getElementById('bPlay').textContent='⏸ Pause';document.getElementById('bPlay').classList.add('active');
-  iv=setInterval(()=>{{upd(cur>=FD.length-1?0:cur+1);}},1000/(FPS*spd));
+  if(playing){{
+    playing=false;
+    document.getElementById('bPlay').textContent='▶ Play';
+    document.getElementById('bPlay').classList.remove('active');
+    clearInterval(iv);
+    return;
+  }}
+  playing=true;
+  document.getElementById('bPlay').textContent='⏸ Pause';
+  document.getElementById('bPlay').classList.add('active');
+  iv=setInterval(()=>{{
+    if(cur>=FD.length-1) upd(0);
+    else upd(cur+1);
+  }}, 1000/targetFPS);
 }}
+
 document.getElementById('fSlider').addEventListener('input',e=>{{if(playing)play();upd(parseInt(e.target.value));}});
 document.getElementById('bPrev').addEventListener('click',()=>{{if(playing)play();upd(Math.max(0,cur-1));}});
 document.getElementById('bNext').addEventListener('click',()=>{{if(playing)play();upd(Math.min(FD.length-1,cur+1));}});
 document.getElementById('bPlay').addEventListener('click',play);
-document.getElementById('spSlider').addEventListener('input',e=>{{spd=parseFloat(e.target.value);document.getElementById('spVal').textContent=spd+'x';if(playing){{play();play();}}}});
+
+document.getElementById('fpsSlider').addEventListener('input', e=>{{
+  targetFPS = parseFloat(e.target.value);
+  document.getElementById('fpsVal').textContent = targetFPS;
+  if(playing){{
+    clearInterval(iv);
+    iv=setInterval(()=>{{
+      if(cur>=FD.length-1) upd(0);
+      else upd(cur+1);
+    }}, 1000/targetFPS);
+  }}
+}});
+
 document.getElementById('lw').addEventListener('input',e=>{{document.getElementById('lwVal').textContent=e.target.value;draw(cur);}});
 document.getElementById('tl').addEventListener('input',e=>{{const v=parseInt(e.target.value);document.getElementById('tlVal').textContent=v===0?'Completo':v+' frames';draw(cur);}});
 ['chkTraj','chkIDs','chkVec'].forEach(id=>document.getElementById(id).addEventListener('change',()=>draw(cur)));
+
 document.addEventListener('keydown',e=>{{
   if(e.key===' '){{e.preventDefault();play();}}
   else if(e.key==='ArrowLeft'){{if(playing)play();upd(Math.max(0,cur-1));}}
   else if(e.key==='ArrowRight'){{if(playing)play();upd(Math.min(FD.length-1,cur+1));}}
 }});
+
 upd(0);
 </script>
 </body>

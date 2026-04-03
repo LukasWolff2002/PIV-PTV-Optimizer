@@ -38,28 +38,50 @@ def _save_json(data: dict, path: Path) -> None:
 # PREFETCH ASÍNCRONO
 # ─────────────────────────────────────────────
 
+def _load_one(
+    img_path: Path,
+    preprocess_params: dict | None,
+    static_mask_keep,
+) -> tuple:
+    """Carga y preprocesa una imagen. Callable para ThreadPoolExecutor."""
+    raw    = read_image_any(img_path)
+    rgb_u8 = preprocess_frame_for_ptv(raw, preprocess_params)
+    if static_mask_keep is not None:
+        rgb_u8 = apply_static_mask_to_rgb(rgb_u8, static_mask_keep)
+    return img_path, rgb_u8
+
+
 def _prefetch_worker(
     images: list[Path],
     preprocess_params: dict | None,
-    static_mask_keep: np.ndarray | None,
+    static_mask_keep,
     height_px: int,
     width_px: int,
     out_q: queue.Queue,
     n_ahead: int = 4,
 ) -> None:
     """
-    Worker thread: carga y preprocesa imágenes por adelantado.
-    Mientras la GPU procesa el frame N, este hilo prepara N+1..N+n_ahead.
+    Prefetch con 2 threads de I/O en paralelo.
+
+    Leer TIFF + CLAHE son operaciones que liberan el GIL (I/O + extensión C),
+    por lo que 2 threads se ejecutan realmente en paralelo mientras la GPU
+    procesa el frame actual. Más de 2 threads compiten por el mismo disco
+    sin ganancia adicional.
     """
-    for img_path in images:
-        raw   = read_image_any(img_path)
-        rgb_u8 = preprocess_frame_for_ptv(raw, preprocess_params)
+    from concurrent.futures import ThreadPoolExecutor
+    import functools
 
-        h, w = rgb_u8.shape[:2]
-        if static_mask_keep is not None:
-            rgb_u8 = apply_static_mask_to_rgb(rgb_u8, static_mask_keep)
+    _load = functools.partial(
+        _load_one,
+        preprocess_params = preprocess_params,
+        static_mask_keep  = static_mask_keep,
+    )
 
-        out_q.put((img_path, rgb_u8))  # bloquea si la cola está llena (backpressure)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        # Enviar en orden y recuperar en orden (preserva secuencia de frames)
+        futures = [pool.submit(_load, p) for p in images]
+        for fut in futures:
+            out_q.put(fut.result())
 
     out_q.put(None)  # sentinel de fin
 
@@ -234,8 +256,8 @@ class InteractiveVisualizer:
                 alpha = 0.2 + 0.8 * (i / len(hist))
                 cv2.line(canvas, hist[i-1], hist[i], color, 1)
             cv2.circle(canvas, hist[-1], 3, color, -1)
-            cv2.putText(canvas, str(tid), (hist[-1][0]+5, hist[-1][1]-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
+            #cv2.putText(canvas, str(tid), (hist[-1][0]+5, hist[-1][1]-5),
+            #            cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
         return canvas
 
     def _on_slider(self, val: float) -> None:
@@ -288,9 +310,9 @@ class InteractiveVisualizer:
                                        "-", color=color, lw=thickness, alpha=alpha)
             # Centroide actual
             cx_now, cy_now = hist[-1]
-            self.ax_track.plot(cx_now, cy_now, "o", color=color, ms=5)
-            self.ax_track.text(cx_now + 6, cy_now - 6, str(tid),
-                               color=color, fontsize=7, alpha=0.9)
+            #self.ax_track.plot(cx_now, cy_now, "o", color=color, ms=5)
+            #self.ax_track.text(cx_now + 6, cy_now - 6, str(tid),
+            #                   color=color, fontsize=7, alpha=0.9)
 
         # Info
         t_s = frame_idx / max(self.fps, 1)
@@ -312,100 +334,68 @@ class InteractiveVisualizer:
 # GUARDAR FRAMES ANOTADOS PARA HTML
 # ─────────────────────────────────────────────
 
-import colorsys as _colorsys
-
-def _track_color_cache(cache: dict, tid: int) -> tuple:
-    if tid not in cache:
-        hue = (tid * 137.508) % 360
-        r, g, b = _colorsys.hsv_to_rgb(hue / 360, 0.85, 0.95)
-        cache[tid] = (int(b*255), int(g*255), int(r*255))  # BGR
-    return cache[tid]
-
-
-def _render_detections(gray: np.ndarray, dets: list) -> np.ndarray:
-    """Renderiza solo las detecciones del frame (ejes de fibra, sin trayectorias)."""
-    import math
-    canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    for d in dets:
-        cx, cy = int(round(d.cx)), int(round(d.cy))
-        half = d.length_px / 2.0
-        ang  = math.radians(d.angle_deg)
-        dx   = int(round(math.cos(ang) * half))
-        dy   = int(round(math.sin(ang) * half))
-        cv2.line(canvas, (cx-dx, cy-dy), (cx+dx, cy+dy), (0, 220, 255), 1)
-        cv2.circle(canvas, (cx, cy), 2, (0, 220, 255), -1)
-    return canvas
-
-
-def _render_tracks(gray: np.ndarray, frame_idx: int,
-                   tracks: list, track_history: dict,
-                   tail_length: int, colors: dict) -> np.ndarray:
-    """Renderiza solo trayectorias de centroides (sin detecciones)."""
-    canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    for tr in tracks:
-        hist = [(int(round(x)), int(round(y)))
-                for x, y, fi in track_history[tr.track_id]
-                if fi <= frame_idx]
-        if tail_length > 0:
-            hist = hist[-tail_length:]
-        color = _track_color_cache(colors, tr.track_id)
-        if len(hist) == 1:
-            cv2.circle(canvas, hist[0], 3, color, -1)
-            continue
-        if len(hist) < 2:
-            continue
-        n = len(hist)
-        for i in range(1, n):
-            thickness = 1 if i < n * 0.6 else 2
-            cv2.line(canvas, hist[i-1], hist[i], color, thickness)
-        cv2.circle(canvas, hist[-1], 4, color, -1)
-        cv2.putText(canvas, str(tr.track_id),
-                    (hist[-1][0] + 6, hist[-1][1] - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1, cv2.LINE_AA)
-    return canvas
-
-
 def _save_annotated_frames(
     frames: list[np.ndarray],
     dets_per_frame: list[list],
     img_names: list[str],
     tracks: list,
     ann_dir: Path,
-    tracks_dir: Path,
     tail_length: int = 0,
-    save_images: bool = True,
 ) -> None:
     """
-    Guarda dos carpetas de imágenes:
-    - ann_dir    (annotations): solo detecciones del frame, sin trayectorias
-    - tracks_dir (tracks)     : solo trayectorias de centroides, sin detecciones
-
-    Si save_images=False no guarda nada (but sigue siendo necesario para el HTML).
+    Guarda PNGs con solo las trayectorias de centroides (sin detecciones de fibras).
+    Cada track tiene un color único. La opacidad aumenta hacia el frame más reciente.
     """
-    if not save_images:
-        return
+    import colorsys
 
-    ann_dir.mkdir(parents=True, exist_ok=True)
-    tracks_dir.mkdir(parents=True, exist_ok=True)
+    track_colors: dict[int, tuple] = {}
+    def _color(tid: int) -> tuple:
+        if tid not in track_colors:
+            hue = (tid * 137.508) % 360
+            r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.85, 0.95)
+            track_colors[tid] = (int(b*255), int(g*255), int(r*255))  # BGR
+        return track_colors[tid]
 
+    # Pre-indexar history por track
     track_history: dict[int, list] = {
         tr.track_id: [(r.x, r.y, r.frame_idx) for r in tr.history]
         for tr in tracks
     }
-    colors: dict[int, tuple] = {}
 
-    for frame_idx, (gray, dets, img_name) in enumerate(
-            zip(frames, dets_per_frame, img_names)):
-        stem = Path(img_name).stem
+    n_frames = len(frames)
+    for frame_idx, (gray, img_name) in enumerate(zip(frames, img_names)):
+        canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
-        # annotations: solo detecciones
-        det_canvas = _render_detections(gray, dets)
-        cv2.imwrite(str(ann_dir / f"{stem}.png"), det_canvas)
+        # Solo trayectorias — sin líneas de fibra ni bounding boxes
+        for tr in tracks:
+            hist = [(int(round(x)), int(round(y)))
+                    for x, y, fi in track_history[tr.track_id]
+                    if fi <= frame_idx]
+            if tail_length > 0:
+                hist = hist[-tail_length:]
+            if len(hist) < 2:
+                # Punto único: solo el centroide actual
+                if len(hist) == 1:
+                    color = _color(tr.track_id)
+                    cv2.circle(canvas, hist[0], 3, color, -1)
+                continue
 
-        # tracks: solo trayectorias
-        trk_canvas = _render_tracks(gray, frame_idx, tracks, track_history,
-                                    tail_length, colors)
-        cv2.imwrite(str(tracks_dir / f"{stem}.png"), trk_canvas)
+            color = _color(tr.track_id)
+            n = len(hist)
+            for i in range(1, n):
+                # Grosor más grueso hacia el final de la trayectoria
+                thickness = 1 if i < n * 0.6 else 2
+                cv2.line(canvas, hist[i-1], hist[i], color, thickness)
+
+            # Punto del centroide actual (más grande)
+            cv2.circle(canvas, hist[-1], 4, color, -1)
+            # ID del track
+            #cv2.putText(canvas, str(tr.track_id),
+            #            (hist[-1][0] + 6, hist[-1][1] - 6),
+            #            cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1, cv2.LINE_AA)
+
+        out_png = ann_dir / f"{Path(img_name).stem}.png"
+        cv2.imwrite(str(out_png), canvas)
 
 
 # ─────────────────────────────────────────────
@@ -553,26 +543,17 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     print(f"[PTV] tracks.csv     -> {run_cfg.out_dir / 'tracks.csv'}", flush=True)
     print(f"[PTV] summary.json   -> {run_cfg.out_dir / 'summary.json'}", flush=True)
 
-    # ── Imágenes anotadas y carpeta de tracks ────────────────────
-    save_images = getattr(run_cfg, "save_images", True)
-    ann_dir    = run_cfg.out_dir / "annotations"
-    tracks_dir = run_cfg.out_dir / "tracks"
+    # ── Visualizador HTML offline ─────────────────────────────────
+    ann_dir = run_cfg.out_dir / "annotations"
+    ensure_dir(ann_dir)
+    _save_annotated_frames(frames_buffer, dets_buffer, img_names_buffer,
+                           tracks_filtered, ann_dir,
+                           getattr(run_cfg, "viz_tail_length", 0))
 
-    _save_annotated_frames(
-        frames_buffer, dets_buffer, img_names_buffer,
-        tracks_filtered, ann_dir, tracks_dir,
-        tail_length  = getattr(run_cfg, "viz_tail_length", 0),
-        save_images  = save_images,
-    )
-    if save_images:
-        print(f"[PTV] annotations/   -> {ann_dir}", flush=True)
-        print(f"[PTV] tracks/        -> {tracks_dir}", flush=True)
-
-    # ── Visualizador HTML offline (usa carpeta tracks — solo trayectorias) ──
-    trk_images = sorted(tracks_dir.glob("*.png")) if save_images else []
-    if trk_images:
+    ann_images = list(ann_dir.glob("*.png"))
+    if ann_images:
         create_interactive_visualizer(
-            ann_dir   = tracks_dir,   # HTML usa las imágenes de tracks
+            ann_dir   = ann_dir,
             tracks    = tracks_filtered,
             out_path  = run_cfg.out_dir / "visualizer.html",
             width_px  = run_cfg.width_px,
@@ -582,31 +563,31 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
         print(f"[PTV] visualizer.html -> {run_cfg.out_dir / 'visualizer.html'}", flush=True)
 
     # ── Visualizador interactivo matplotlib (post-proceso) ────────
-    print("[VIZ] Abriendo visualizador interactivo...", flush=True)
-    viz = InteractiveVisualizer(
-        n_frames     = len(images),
-        width_px     = run_cfg.width_px,
-        height_px    = run_cfg.height_px,
-        fps          = run_cfg.fps,
-        px_per_mm    = run_cfg.px_per_mm,
-        tail_length  = getattr(run_cfg, "viz_tail_length", 0),
-        update_every = 1,
-    )
-    # Cargar todos los frames — solo trayectorias, sin detecciones
-    all_tracks_snap = [
-        {
-            "id":      tr.track_id,
-            "history": [(r.x, r.y, r.frame_idx) for r in tr.history],
-        }
-        for tr in tracks_filtered if len(tr.history) > 0
-    ]
-    for fi, (gray, img_name) in enumerate(zip(frames_buffer, img_names_buffer)):
-        viz._frames[fi] = gray
-        viz._dets[fi]   = []           # sin detecciones en el visualizador
-        viz._tracks[fi] = all_tracks_snap
-        viz._max_ready  = fi
+    #print("[VIZ] Abriendo visualizador interactivo...", flush=True)
+    #viz = InteractiveVisualizer(
+    #    n_frames     = len(images),
+    #    width_px     = run_cfg.width_px,
+    #    height_px    = run_cfg.height_px,
+    #    fps          = run_cfg.fps,
+    #    px_per_mm    = run_cfg.px_per_mm,
+    #    tail_length  = getattr(run_cfg, "viz_tail_length", 0),
+    #    update_every = 1,
+    #)
+    # Cargar todos los frames en el visualizador de una vez
+    #for fi, (gray, dets, img_name) in enumerate(
+    #        zip(frames_buffer, dets_buffer, img_names_buffer)):
+    #    viz._frames[fi] = gray
+    #    viz._dets[fi]   = dets
+    #    viz._tracks[fi] = [
+    #        {
+    #            "id":      tr.track_id,
+    #            "history": [(r.x, r.y, r.frame_idx) for r in tr.history],
+    #        }
+    #        for tr in tracks_filtered if len(tr.history) > 0
+    #    ]
+    #    viz._max_ready = fi
 
-    viz._current = len(images) - 1
-    viz.slider.set_val(len(images) - 1)
-    viz._draw(len(images) - 1)
-    viz.close()
+    #viz._current = len(images) - 1
+    #viz.slider.set_val(len(images) - 1)
+    #viz._draw(len(images) - 1)
+    #viz.close()
