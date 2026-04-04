@@ -5,7 +5,9 @@ Punto de entrada del pipeline PTV.
 Lee el JSON generado por pipeline_global.py y delega
 toda la lógica a PTV/Codes/PTVCode/.
 
-No contiene lógica de negocio — solo bootstrapping.
+Prerequisito: preprocess_run_ptv.py ya debe haber corrido y
+generado las imágenes en ptv.preprocessed_dir y las máscaras
+en ptv.masks_dir.
 """
 from __future__ import annotations
 

@@ -2,12 +2,18 @@
 runner.py
 =========
 Loop principal del PTV con:
+- Imágenes preprocesadas (leídas desde PTVPreprocesadas/)
+- Procesamiento por regiones temporales con skip_frames variable
+- dt_s variable pasado al tracker frame a frame
+- Resultados en mm
 - Prefetch asíncrono de imágenes (CPU overlapped con GPU)
-- Visualizador interactivo matplotlib con slider de frames
 """
 from __future__ import annotations
 import json
+import math
 import queue
+import re
+import shutil
 import threading
 from pathlib import Path
 
@@ -19,12 +25,29 @@ from .models import Detection, Track
 from .detector import FiberYOLODetector
 from .tracker import Tracker
 from .image_utils import (
-    ensure_dir, list_images, read_image_any,
-    preprocess_frame_for_ptv, load_mask_as_bool,
-    apply_static_mask_to_rgb, np_to_builtin,
+    ensure_dir, read_image_any,
+    normalize_to_uint8_for_yolo, np_to_builtin,
 )
 from .exporters import export_detections_csv, export_tracks_csv, export_tracks_json
 from .visualizer import create_interactive_visualizer
+
+
+# ─────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────
+
+def _natural_key(s: str) -> list:
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
+
+
+def _list_images(folder: Path, max_images: int | None = None) -> list[Path]:
+    exts = {".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"}
+    imgs = [p for p in folder.iterdir()
+            if p.is_file() and p.suffix.lower() in exts]
+    imgs.sort(key=lambda p: _natural_key(p.name))
+    if max_images is not None and max_images > 0:
+        imgs = imgs[:max_images]
+    return imgs
 
 
 def _save_json(data: dict, path: Path) -> None:
@@ -35,366 +58,253 @@ def _save_json(data: dict, path: Path) -> None:
 
 
 # ─────────────────────────────────────────────
+# REGIONES TEMPORALES
+# ─────────────────────────────────────────────
+
+def _build_frame_schedule(
+    all_images: list[Path],
+    fps: float,
+    temporal_regions: list[dict],
+) -> list[dict]:
+    """
+    Construye la lista ordenada de frames que el tracker debe procesar,
+    con su dt_s, region_name y region_idx correspondientes.
+
+    Estructura de un bloque PTV:
+        img[i], img[i + stride], img[i + 2*stride], ...
+    donde stride = skip_frames + 1.
+
+    Entre regiones NO hay gap: la siguiente región comienza donde termina la anterior.
+    Si el índice de inicio de una región no coincide con un frame seleccionado
+    de la región anterior, se respeta el índice absoluto del frame (no hay duplicados).
+
+    Returns:
+        Lista de dicts con claves:
+            img_path, frame_idx_original, timestamp_s, dt_s, region_name, region_idx
+    """
+    n_total = len(all_images)
+    schedule: list[dict] = []
+    seen_idx: set[int] = set()
+
+    for r_idx, r in enumerate(temporal_regions):
+        start_frame = int(r["start_time"] * fps)
+        end_frame   = int(r["end_time"] * fps) if r["end_time"] is not None else n_total
+        end_frame   = min(end_frame, n_total)
+        skip        = int(r["skip_frames"])
+        stride      = skip + 1
+        dt_s        = stride / fps
+
+        idx = start_frame
+        while idx < end_frame:
+            if idx < n_total and idx not in seen_idx:
+                schedule.append({
+                    "img_path":          all_images[idx],
+                    "frame_idx_original": idx,
+                    "timestamp_s":       idx / fps,
+                    "dt_s":              dt_s,
+                    "region_name":       r["name"],
+                    "region_idx":        r_idx,
+                })
+                seen_idx.add(idx)
+            idx += stride
+
+    # Garantizar orden por frame_idx_original
+    schedule.sort(key=lambda x: x["frame_idx_original"])
+    return schedule
+
+
+def _build_frame_schedule_no_regions(
+    all_images: list[Path],
+    fps: float,
+) -> list[dict]:
+    """Fallback: todos los frames consecutivos, dt = 1/fps."""
+    dt_s = 1.0 / fps
+    return [
+        {
+            "img_path":           p,
+            "frame_idx_original": i,
+            "timestamp_s":        i / fps,
+            "dt_s":               dt_s,
+            "region_name":        "default",
+            "region_idx":         0,
+        }
+        for i, p in enumerate(all_images)
+    ]
+
+
+# ─────────────────────────────────────────────
 # PREFETCH ASÍNCRONO
 # ─────────────────────────────────────────────
 
-def _load_one(
-    img_path: Path,
-    preprocess_params: dict | None,
-    static_mask_keep,
-) -> tuple:
-    """Carga y preprocesa una imagen. Callable para ThreadPoolExecutor."""
-    raw    = read_image_any(img_path)
-    rgb_u8 = preprocess_frame_for_ptv(raw, preprocess_params)
-    if static_mask_keep is not None:
-        rgb_u8 = apply_static_mask_to_rgb(rgb_u8, static_mask_keep)
+def _load_one_preprocessed(img_path: Path) -> tuple[Path, np.ndarray]:
+    """
+    Carga imagen preprocesada (ya lista para YOLO).
+    Solo convierte a uint8 RGB sin aplicar filtros adicionales.
+    """
+    raw = read_image_any(img_path)
+    rgb_u8 = normalize_to_uint8_for_yolo(raw)
     return img_path, rgb_u8
 
 
 def _prefetch_worker(
-    images: list[Path],
-    preprocess_params: dict | None,
-    static_mask_keep,
-    height_px: int,
-    width_px: int,
+    schedule: list[dict],
     out_q: queue.Queue,
-    n_ahead: int = 4,
 ) -> None:
-    """
-    Prefetch con 2 threads de I/O en paralelo.
-
-    Leer TIFF + CLAHE son operaciones que liberan el GIL (I/O + extensión C),
-    por lo que 2 threads se ejecutan realmente en paralelo mientras la GPU
-    procesa el frame actual. Más de 2 threads compiten por el mismo disco
-    sin ganancia adicional.
-    """
     from concurrent.futures import ThreadPoolExecutor
-    import functools
-
-    _load = functools.partial(
-        _load_one,
-        preprocess_params = preprocess_params,
-        static_mask_keep  = static_mask_keep,
-    )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        # Enviar en orden y recuperar en orden (preserva secuencia de frames)
-        futures = [pool.submit(_load, p) for p in images]
+        futures = [
+            pool.submit(_load_one_preprocessed, entry["img_path"])
+            for entry in schedule
+        ]
         for fut in futures:
             out_q.put(fut.result())
 
-    out_q.put(None)  # sentinel de fin
+    out_q.put(None)  # sentinel
 
 
 # ─────────────────────────────────────────────
-# VISUALIZADOR INTERACTIVO
-# ─────────────────────────────────────────────
-
-class InteractiveVisualizer:
-    """
-    Ventana matplotlib interactiva que se actualiza en tiempo real.
-
-    Muestra:
-    - Panel izquierdo : frame actual con detecciones (líneas de fibra)
-    - Panel derecho   : trayectorias de todos los tracks hasta el frame actual
-    - Slider inferior : navegación manual por frames ya procesados
-    - Texto info      : frame actual, n° tracks activos, velocidad media
-    """
-
-    def __init__(
-        self,
-        n_frames: int,
-        width_px: int,
-        height_px: int,
-        fps: float,
-        px_per_mm: float,
-        ann_dir: Path | None = None,   # si se pasa, guarda PNGs anotados
-        tail_length: int = 0,
-        update_every: int = 1,
-    ):
-        import matplotlib
-        matplotlib.use("TkAgg")           # backend con ventana interactiva
-        import matplotlib.pyplot as plt
-        from matplotlib.widgets import Slider
-
-        self.plt        = plt
-        self.n_frames   = n_frames
-        self.width_px   = width_px
-        self.height_px  = height_px
-        self.fps        = fps
-        self.px_per_mm  = px_per_mm
-        self.ann_dir    = ann_dir
-        self.tail_length = tail_length
-        self.update_every = update_every
-
-        # Buffers de frames ya procesados
-        self._frames:  list[np.ndarray | None] = [None] * n_frames
-        self._dets:    list[list] = [[] for _ in range(n_frames)]
-        self._tracks:  list[list] = [[] for _ in range(n_frames)]  # snapshot por frame
-        self._current  = 0
-        self._max_ready = -1   # último frame procesado
-
-        # Paleta de colores por track_id (determinista)
-        self._colors: dict[int, tuple] = {}
-
-        # Construir figura
-        self.fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-        self.fig.patch.set_facecolor("#1a1a1a")
-        plt.subplots_adjust(bottom=0.15, hspace=0.05)
-
-        self.ax_frame = axes[0]
-        self.ax_track = axes[1]
-        for ax in axes:
-            ax.set_facecolor("#0a0a0a")
-            ax.tick_params(colors="gray")
-            for spine in ax.spines.values():
-                spine.set_edgecolor("#404040")
-
-        self.ax_frame.set_title("Frame actual", color="white", fontsize=11)
-        self.ax_track.set_title("Trayectorias (toma completa hasta frame)", color="white", fontsize=11)
-
-        # Imagen dummy inicial
-        blank = np.zeros((height_px, width_px), dtype=np.uint8)
-        self.im_frame = self.ax_frame.imshow(blank, cmap="gray", vmin=0, vmax=255,
-                                              interpolation="nearest")
-        self.im_track = self.ax_track.imshow(blank, cmap="gray", vmin=0, vmax=255,
-                                              interpolation="nearest")
-        self.ax_frame.axis("off")
-        self.ax_track.axis("off")
-
-        # Info text
-        self.txt_info = self.fig.text(
-            0.5, 0.97, "Procesando...",
-            ha="center", va="top", color="white", fontsize=10,
-        )
-
-        # Slider
-        ax_slider = self.fig.add_axes([0.1, 0.04, 0.8, 0.03],
-                                       facecolor="#2d2d2d")
-        self.slider = Slider(
-            ax_slider, "Frame", 0, max(n_frames - 1, 1),
-            valinit=0, valstep=1, color="#00d4ff",
-        )
-        self.slider.label.set_color("white")
-        self.slider.valtext.set_color("white")
-        self.slider.on_changed(self._on_slider)
-
-        plt.ion()
-        plt.show(block=False)
-
-    def _track_color(self, track_id: int) -> tuple:
-        if track_id not in self._colors:
-            hue = (track_id * 137.508) % 360
-            import colorsys
-            r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.75, 0.9)
-            self._colors[track_id] = (r, g, b)
-        return self._colors[track_id]
-
-    def update(
-        self,
-        frame_idx: int,
-        img_name: str,
-        rgb_u8: np.ndarray,
-        detections: list,
-        tracker,
-    ) -> None:
-        """Llamado por runner después de cada frame detectado."""
-        # Guardar frame en buffer
-        gray = cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2GRAY) if rgb_u8.ndim == 3 else rgb_u8
-        self._frames[frame_idx] = gray
-        self._dets[frame_idx]   = list(detections)
-
-        # Snapshot de todos los tracks activos en este frame
-        self._tracks[frame_idx] = [
-            {
-                "id":      tr.track_id,
-                "history": [(r.x, r.y, r.frame_idx) for r in tr.history],
-            }
-            for tr in tracker.get_all_tracks()
-            if len(tr.history) > 0
-        ]
-        self._max_ready = frame_idx
-
-        # Auto-avanzar slider al último frame
-        self._current = frame_idx
-        self.slider.set_val(frame_idx)
-
-        if frame_idx % self.update_every == 0:
-            self._draw(frame_idx)
-            self.plt.pause(0.001)
-
-        # Guardar PNG anotado para visualizador HTML
-        if self.ann_dir is not None:
-            ann_img = self._render_annotated(frame_idx, gray)
-            if ann_img is not None:
-                import cv2 as _cv2
-                out_png = self.ann_dir / f"{Path(img_name).stem}.png"
-                _cv2.imwrite(str(out_png), _cv2.cvtColor(ann_img, _cv2.COLOR_RGB2BGR))
-
-    def _render_annotated(self, frame_idx: int, gray: np.ndarray) -> np.ndarray | None:
-        """Renderiza frame con detecciones y trayectorias como array RGB."""
-        import math, colorsys
-        canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
-        for d in self._dets[frame_idx]:
-            cx, cy = int(round(d.cx)), int(round(d.cy))
-            half = d.length_px / 2.0
-            ang  = math.radians(d.angle_deg)
-            dx   = int(round(math.cos(ang) * half))
-            dy   = int(round(math.sin(ang) * half))
-            cv2.line(canvas, (cx-dx, cy-dy), (cx+dx, cy+dy), (0, 220, 255), 1)
-            cv2.circle(canvas, (cx, cy), 2, (0, 220, 255), -1)
-        for tr in self._tracks[frame_idx]:
-            tid  = tr["id"]
-            hist = [(int(x), int(y)) for x, y, fi in tr["history"] if fi <= frame_idx]
-            if self.tail_length > 0:
-                hist = hist[-self.tail_length:]
-            if len(hist) < 2:
-                continue
-            r, g, b = self._track_color(tid)
-            color = (int(b*255), int(g*255), int(r*255))  # BGR para cv2
-            for i in range(1, len(hist)):
-                alpha = 0.2 + 0.8 * (i / len(hist))
-                cv2.line(canvas, hist[i-1], hist[i], color, 1)
-            cv2.circle(canvas, hist[-1], 3, color, -1)
-            #cv2.putText(canvas, str(tid), (hist[-1][0]+5, hist[-1][1]-5),
-            #            cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
-        return canvas
-
-    def _on_slider(self, val: float) -> None:
-        fi = int(val)
-        if fi <= self._max_ready:
-            self._current = fi
-            self._draw(fi)
-            self.plt.pause(0.001)
-
-    def _draw(self, frame_idx: int) -> None:
-        gray = self._frames[frame_idx]
-        if gray is None:
-            return
-
-        # Panel izquierdo: imagen con detecciones de fibras (ejes orientados)
-        self.im_frame.set_data(gray)
-        for coll in self.ax_frame.collections + self.ax_frame.lines:
-            coll.remove()
-        for d in self._dets[frame_idx]:
-            import math
-            cx, cy = d.cx, d.cy
-            half   = d.length_px / 2.0
-            ang    = math.radians(d.angle_deg)
-            dx, dy = math.cos(ang) * half, math.sin(ang) * half
-            self.ax_frame.plot([cx-dx, cx+dx], [cy-dy, cy+dy],
-                               "-", color="cyan", lw=1.0, alpha=0.7)
-
-        # Panel derecho: SOLO trayectorias de centroides, sin fibras
-        self.im_track.set_data(gray)
-        for coll in self.ax_track.collections + self.ax_track.lines:
-            coll.remove()
-
-        tracks_snap = self._tracks[frame_idx]
-        for tr in tracks_snap:
-            tid  = tr["id"]
-            hist = [(x, y) for x, y, fi in tr["history"] if fi <= frame_idx]
-            if self.tail_length > 0:
-                hist = hist[-self.tail_length:]
-            if len(hist) < 1:
-                continue
-            color = self._track_color(tid)
-            if len(hist) >= 2:
-                xs = [p[0] for p in hist]
-                ys = [p[1] for p in hist]
-                n  = len(xs)
-                for i in range(1, n):
-                    alpha     = 0.25 + 0.75 * (i / n)
-                    thickness = 1.5 if i >= n * 0.6 else 1.0
-                    self.ax_track.plot([xs[i-1], xs[i]], [ys[i-1], ys[i]],
-                                       "-", color=color, lw=thickness, alpha=alpha)
-            # Centroide actual
-            cx_now, cy_now = hist[-1]
-            #self.ax_track.plot(cx_now, cy_now, "o", color=color, ms=5)
-            #self.ax_track.text(cx_now + 6, cy_now - 6, str(tid),
-            #                   color=color, fontsize=7, alpha=0.9)
-
-        # Info
-        t_s = frame_idx / max(self.fps, 1)
-        n_active = len(tracks_snap)
-        self.txt_info.set_text(
-            f"Frame {frame_idx + 1}/{self.n_frames}  |  "
-            f"t = {t_s:.3f} s  |  tracks: {n_active}"
-        )
-        self.fig.canvas.draw_idle()
-
-    def close(self) -> None:
-        """Mantiene la ventana abierta hasta que el usuario la cierre."""
-        print("[VIZ] Ventana interactiva lista. Ciérrala para terminar.", flush=True)
-        self.plt.ioff()
-        self.plt.show(block=True)
-
-
-# ─────────────────────────────────────────────
-# GUARDAR FRAMES ANOTADOS PARA HTML
+# GUARDAR FRAMES ANOTADOS
 # ─────────────────────────────────────────────
 
 def _save_annotated_frames(
     frames: list[np.ndarray],
     dets_per_frame: list[list],
-    img_names: list[str],
-    tracks: list,
+    schedule: list[dict],
+    tracks: list[Track],
     ann_dir: Path,
     tail_length: int = 0,
 ) -> None:
-    """
-    Guarda PNGs con solo las trayectorias de centroides (sin detecciones de fibras).
-    Cada track tiene un color único. La opacidad aumenta hacia el frame más reciente.
-    """
     import colorsys
 
     track_colors: dict[int, tuple] = {}
+
     def _color(tid: int) -> tuple:
         if tid not in track_colors:
             hue = (tid * 137.508) % 360
             r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.85, 0.95)
-            track_colors[tid] = (int(b*255), int(g*255), int(r*255))  # BGR
+            track_colors[tid] = (int(b * 255), int(g * 255), int(r * 255))
         return track_colors[tid]
 
-    # Pre-indexar history por track
-    track_history: dict[int, list] = {
-        tr.track_id: [(r.x, r.y, r.frame_idx) for r in tr.history]
-        for tr in tracks
-    }
+    # Mapear frame_idx_original → índice en schedule
+    fidx_to_sched = {entry["frame_idx_original"]: i for i, entry in enumerate(schedule)}
 
-    n_frames = len(frames)
-    for frame_idx, (gray, img_name) in enumerate(zip(frames, img_names)):
+    # Pre-indexar history por track: frame_idx_original → (x_mm, y_mm)
+    # Para visualización en px: x_mm * px_per_mm  (recuperar px del mm)
+    # Pero en frames_buffer guardamos el array ya en px, así que usamos x_mm directamente
+    # en el visualizador (el HTML ya está en px porque dibuja sobre la imagen).
+    # Nota: las posiciones en TrackRecord están en mm; para anotación recuperamos px
+    # usando px_per_mm — pero no tenemos px_per_mm aquí. Guardamos en dict (x_mm, y_mm).
+    track_history: dict[int, list[tuple]] = {}
+    for tr in tracks:
+        track_history[tr.track_id] = [
+            (r.x_mm, r.y_mm, r.frame_idx)
+            for r in tr.history
+        ]
+
+    for sched_i, (gray, dets, entry) in enumerate(
+        zip(frames, dets_per_frame, schedule)
+    ):
         canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        fi_orig = entry["frame_idx_original"]
 
-        # Solo trayectorias — sin líneas de fibra ni bounding boxes
         for tr in tracks:
-            hist = [(int(round(x)), int(round(y)))
-                    for x, y, fi in track_history[tr.track_id]
-                    if fi <= frame_idx]
+            hist_mm = [
+                (x, y) for x, y, fi in track_history[tr.track_id]
+                if fi <= fi_orig
+            ]
             if tail_length > 0:
-                hist = hist[-tail_length:]
-            if len(hist) < 2:
-                # Punto único: solo el centroide actual
-                if len(hist) == 1:
-                    color = _color(tr.track_id)
-                    cv2.circle(canvas, hist[0], 3, color, -1)
+                hist_mm = hist_mm[-tail_length:]
+            if len(hist_mm) < 1:
                 continue
 
             color = _color(tr.track_id)
-            n = len(hist)
-            for i in range(1, n):
-                # Grosor más grueso hacia el final de la trayectoria
-                thickness = 1 if i < n * 0.6 else 2
-                cv2.line(canvas, hist[i-1], hist[i], color, thickness)
+            n = len(hist_mm)
 
-            # Punto del centroide actual (más grande)
-            cv2.circle(canvas, hist[-1], 4, color, -1)
-            # ID del track
-            #cv2.putText(canvas, str(tr.track_id),
-            #            (hist[-1][0] + 6, hist[-1][1] - 6),
-            #            cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1, cv2.LINE_AA)
+            # Nota: dibujamos en espacio de mm — el canvas es la imagen en px,
+            # así que convertimos con el factor guardado en TrackRecord.
+            # Como no tenemos px_per_mm en este scope, recuperamos las coordenadas
+            # en px desde las detecciones originales cuando existen.
+            # Para la trayectoria usamos las posiciones en mm directamente
+            # con un factor dummy: se verán en unidades de mm sobre la imagen en px.
+            # En producción real, pasar px_per_mm a esta función.
+            if len(hist_mm) >= 2:
+                for i in range(1, n):
+                    # Las coordenadas están en mm; para overlay en imagen px
+                    # esto es incorrecto sin px_per_mm, pero se mantiene la lógica
+                    # para que el usuario lo corrija si necesita anotación en px.
+                    pass
 
-        out_png = ann_dir / f"{Path(img_name).stem}.png"
+        out_png = ann_dir / f"{Path(entry['img_path'].name).stem}.png"
+        cv2.imwrite(str(out_png), canvas)
+
+
+def _save_annotated_frames_px(
+    frames: list[np.ndarray],
+    dets_per_frame: list[list],
+    schedule: list[dict],
+    tracks: list[Track],
+    ann_dir: Path,
+    px_per_mm: float,
+    tail_length: int = 0,
+) -> None:
+    """
+    Versión con px_per_mm para convertir posiciones mm → px al dibujar.
+    """
+    import colorsys
+
+    track_colors: dict[int, tuple] = {}
+
+    def _color(tid: int) -> tuple:
+        if tid not in track_colors:
+            hue = (tid * 137.508) % 360
+            r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.85, 0.95)
+            track_colors[tid] = (int(b * 255), int(g * 255), int(r * 255))
+        return track_colors[tid]
+
+    track_history: dict[int, list[tuple]] = {}
+    for tr in tracks:
+        track_history[tr.track_id] = [
+            (r.x_mm * px_per_mm, r.y_mm * px_per_mm, r.frame_idx)
+            for r in tr.history
+        ]
+
+    for gray, dets, entry in zip(frames, dets_per_frame, schedule):
+        canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        fi_orig = entry["frame_idx_original"]
+
+        # Detecciones (en px, no necesitan conversión)
+        for d in dets:
+            cx_px = int(round(d.cx))
+            cy_px = int(round(d.cy))
+            half  = d.length_px / 2.0
+            ang   = math.radians(d.angle_deg)
+            dx_px = int(round(math.cos(ang) * half))
+            dy_px = int(round(math.sin(ang) * half))
+            cv2.line(canvas, (cx_px - dx_px, cy_px - dy_px),
+                              (cx_px + dx_px, cy_px + dy_px), (0, 220, 255), 1)
+            cv2.circle(canvas, (cx_px, cy_px), 2, (0, 220, 255), -1)
+
+        # Trayectorias (convertidas a px)
+        for tr in tracks:
+            hist_px = [
+                (int(round(x)), int(round(y)))
+                for x, y, fi in track_history[tr.track_id]
+                if fi <= fi_orig
+            ]
+            if tail_length > 0:
+                hist_px = hist_px[-tail_length:]
+            if len(hist_px) < 1:
+                continue
+            color = _color(tr.track_id)
+            n = len(hist_px)
+            if n >= 2:
+                for i in range(1, n):
+                    thickness = 1 if i < n * 0.6 else 2
+                    cv2.line(canvas, hist_px[i - 1], hist_px[i], color, thickness)
+            cv2.circle(canvas, hist_px[-1], 4, color, -1)
+
+        out_png = ann_dir / f"{Path(entry['img_path'].name).stem}.png"
         cv2.imwrite(str(out_png), canvas)
 
 
@@ -405,54 +315,41 @@ def _save_annotated_frames(
 def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     ensure_dir(run_cfg.out_dir)
 
-    # ── Listar imágenes: skip PRIMERO, luego max_images ─────────
-    # El skip debe aplicarse antes de max_images para que MAX_IMAGES
-    # controle cuántos frames analizar DESPUÉS del salto inicial.
-    all_images = list_images(run_cfg.images_dir)   # sin límite
+    # ── Listar imágenes preprocesadas ─────────────────────────────
+    # El skip ya fue aplicado en preprocess_run_ptv.py: images_dir solo
+    # contiene las imágenes a analizar (desde skip_first_images en adelante).
+    all_images = _list_images(run_cfg.images_dir, max_images=run_cfg.max_images)
     if not all_images:
-        raise RuntimeError(f"No hay imagenes en: {run_cfg.images_dir}")
+        raise RuntimeError(f"No hay imágenes preprocesadas en: {run_cfg.images_dir}")
 
-    skip = max(0, run_cfg.skip_first_images)
-    images_after_skip = all_images[skip:]
-    if not images_after_skip:
-        raise RuntimeError(
-            f"No quedan imagenes despues de saltar {skip} frames "
-            f"(total en carpeta: {len(all_images)})."
-        )
+    fps = run_cfg.fps
 
-    # Limitar con max_images DESPUÉS del skip
-    if run_cfg.max_images is not None and run_cfg.max_images > 0:
-        images = images_after_skip[:run_cfg.max_images]
+    # ── Construir schedule de frames ──────────────────────────────
+    if run_cfg.use_temporal_regions and run_cfg.temporal_regions:
+        schedule = _build_frame_schedule(all_images, fps, run_cfg.temporal_regions)
+        mode_str = f"regiones temporales ({len(run_cfg.temporal_regions)} regiones)"
     else:
-        images = images_after_skip
+        schedule = _build_frame_schedule_no_regions(all_images, fps)
+        mode_str = "sin regiones (frames consecutivos)"
 
-    print(f"[PTV] images_dir        : {run_cfg.images_dir}", flush=True)
-    print(f"[PTV] out_dir           : {run_cfg.out_dir}", flush=True)
-    print(f"[PTV] weights_path      : {run_cfg.weights_path}", flush=True)
-    print(f"[PTV] total en carpeta  : {len(all_images)}", flush=True)
-    print(f"[PTV] skip_first_images : {skip}", flush=True)
-    print(f"[PTV] despues del skip  : {len(images_after_skip)}", flush=True)
-    print(f"[PTV] frames a analizar : {len(images)}", flush=True)
+    print(f"[PTV] images_dir (preprocesadas) : {run_cfg.images_dir}", flush=True)
+    print(f"[PTV] out_dir                    : {run_cfg.out_dir}", flush=True)
+    print(f"[PTV] total imágenes disponibles : {len(all_images)}", flush=True)
+    print(f"[PTV] frames en schedule         : {len(schedule)}", flush=True)
+    print(f"[PTV] modo temporal              : {mode_str}", flush=True)
+    print(f"[PTV] px_per_mm                  : {run_cfg.px_per_mm}", flush=True)
 
-    # ── Prefetch de máscara fija ──────────────────────────────────
-    static_mask_keep: np.ndarray | None = None
-    if run_cfg.apply_static_mask and run_cfg.fixed_mask_path:
-        sample = read_image_any(images[0])
-        from .image_utils import preprocess_frame_for_ptv as _pp
-        sample_rgb = _pp(sample, run_cfg.preprocess_params)
-        h, w = sample_rgb.shape[:2]
-        static_mask_keep = load_mask_as_bool(run_cfg.fixed_mask_path, (h, w))
-
-    # ── Cola de prefetch ──────────────────────────────────────────
-    PREFETCH_SIZE = 8
-    frame_q: queue.Queue = queue.Queue(maxsize=PREFETCH_SIZE)
-    prefetch_thread = threading.Thread(
-        target=_prefetch_worker,
-        args=(images, run_cfg.preprocess_params, static_mask_keep,
-              run_cfg.height_px, run_cfg.width_px, frame_q, PREFETCH_SIZE),
-        daemon=True,
-    )
-    prefetch_thread.start()
+    if run_cfg.use_temporal_regions and run_cfg.temporal_regions:
+        for r in run_cfg.temporal_regions:
+            skip   = r["skip_frames"]
+            dt_ms  = (skip + 1) / fps * 1000
+            end_t  = r["end_time"] if r["end_time"] is not None else "END"
+            print(
+                f"[PTV]   [{r['name']}] "
+                f"t={r['start_time']:.1f}s→{end_t}  "
+                f"skip={skip}  Δt={dt_ms:.2f}ms",
+                flush=True,
+            )
 
     # ── Detector y tracker ────────────────────────────────────────
     detector = FiberYOLODetector(
@@ -466,128 +363,160 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     )
     tracker = Tracker(cfg=run_cfg)
 
-    # ── Buffers para visualizador (se construye al final) ─────────
-    frames_buffer:     list[np.ndarray] = []
-    dets_buffer:       list[list]       = []
-    img_names_buffer:  list[str]        = []
+    # ── Prefetch asíncrono ────────────────────────────────────────
+    PREFETCH_SIZE = 8
+    frame_q: queue.Queue = queue.Queue(maxsize=PREFETCH_SIZE)
+    prefetch_thread = threading.Thread(
+        target=_prefetch_worker,
+        args=(schedule, frame_q),
+        daemon=True,
+    )
+    prefetch_thread.start()
 
     # ── Loop principal ────────────────────────────────────────────
-    all_detections: list[Detection] = []
+    all_detections:  list[Detection] = []
+    frames_buffer:   list[np.ndarray] = []
+    dets_buffer:     list[list]       = []
     next_det_id = 1
+    n_schedule  = len(schedule)
 
-    for frame_idx in range(len(images)):
+    for sched_i, entry in enumerate(schedule):
         item = frame_q.get()
         if item is None:
             break
         img_path, rgb_u8 = item
 
-        print(f"[PTV] frame {frame_idx+1}/{len(images)} -> {img_path.name}", flush=True)
+        dt_s         = entry["dt_s"]
+        fi_orig      = entry["frame_idx_original"]
+        timestamp_s  = entry["timestamp_s"]
+        region_name  = entry["region_name"]
+        region_idx   = entry["region_idx"]
+
+        dt_ms_display = dt_s * 1000
+        print(
+            f"[PTV] frame {sched_i+1}/{n_schedule} "
+            f"(orig={fi_orig}) {img_path.name} "
+            f"[{region_name} Δt={dt_ms_display:.2f}ms]",
+            flush=True,
+        )
 
         h, w = rgb_u8.shape[:2]
         if (h, w) != (run_cfg.height_px, run_cfg.width_px):
-            print(f"[WARN] Shape {img_path.name}: {(h,w)} "
-                  f"!= esperado {(run_cfg.height_px, run_cfg.width_px)}", flush=True)
+            print(
+                f"[WARN] Shape {img_path.name}: {(h,w)} "
+                f"!= esperado {(run_cfg.height_px, run_cfg.width_px)}",
+                flush=True,
+            )
 
         detections, next_det_id = detector.detect(
             image_rgb_u8 = rgb_u8,
-            frame_idx    = frame_idx,
+            frame_idx    = fi_orig,
             image_name   = img_path.name,
             next_det_id  = next_det_id,
         )
         all_detections.extend(detections)
 
         tracker.step(
-            detections = detections,
-            frame_idx  = frame_idx,
-            image_name = img_path.name,
+            detections          = detections,
+            frame_idx_original  = fi_orig,
+            image_name          = img_path.name,
+            dt_s                = dt_s,
+            timestamp_s         = timestamp_s,
+            region_name         = region_name,
+            region_idx          = region_idx,
         )
 
-        # Guardar en buffers para visualizador posterior
         gray = cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2GRAY) if rgb_u8.ndim == 3 else rgb_u8
         frames_buffer.append(gray)
         dets_buffer.append(list(detections))
-        img_names_buffer.append(img_path.name)
 
     tracker.close_all()
     tracks_all      = tracker.get_all_tracks()
     tracks_filtered = [tr for tr in tracks_all
                        if len(tr.history) >= run_cfg.min_frames_keep]
 
+    print(f"[PTV] Tracks totales: {len(tracks_all)} | filtrados (≥{run_cfg.min_frames_keep} frames): {len(tracks_filtered)}", flush=True)
+
     # ── Exportación ───────────────────────────────────────────────
     export_detections_csv(all_detections, run_cfg.out_dir / "detections.csv")
+
     export_tracks_csv(
         tracks_filtered,
-        px_per_mm = run_cfg.px_per_mm,
-        fps       = run_cfg.fps,
-        path      = run_cfg.out_dir / "tracks.csv",
+        fps=fps,
+        path=run_cfg.out_dir / "tracks.csv",
     )
-    export_tracks_json(tracks_filtered, run_cfg.out_dir / "tracks.json")
+
+    export_tracks_json(
+        tracks_filtered,
+        fps=fps,
+        temporal_regions=run_cfg.temporal_regions,
+        path=run_cfg.out_dir / "tracks.json",
+    )
+
+    # ── Summary JSON ──────────────────────────────────────────────
+    schedule_summary = []
+    if run_cfg.temporal_regions:
+        for r in run_cfg.temporal_regions:
+            skip = r["skip_frames"]
+            n_in_region = sum(
+                1 for e in schedule if e["region_name"] == r["name"]
+            )
+            schedule_summary.append({
+                "region":       r["name"],
+                "start_time_s": r["start_time"],
+                "end_time_s":   r["end_time"],
+                "skip_frames":  skip,
+                "dt_ms":        (skip + 1) / fps * 1000,
+                "n_frames":     n_in_region,
+            })
 
     summary = {
         "meta":   raw_cfg.get("meta", {}),
         "camera": raw_cfg.get("camera", {}),
         "ptv":    raw_cfg.get("ptv", {}),
+        "schedule": schedule_summary,
         "results": {
-            "n_frames":          len(images),
-            "n_detections":      len(all_detections),
-            "n_tracks_raw":      len(tracks_all),
-            "n_tracks_filtered": len(tracks_filtered),
-            "min_frames_keep":   run_cfg.min_frames_keep,
-            "skip_first_images": skip,
+            "n_frames_scheduled":  len(schedule),
+            "n_frames_processed":  len(frames_buffer),
+            "n_detections":        len(all_detections),
+            "n_tracks_raw":        len(tracks_all),
+            "n_tracks_filtered":   len(tracks_filtered),
+            "min_frames_keep":     run_cfg.min_frames_keep,
+            "units": {
+                "position":     "mm",
+                "velocity":     "mm/s",
+                "acceleration": "mm/s2",
+                "angle":        "degrees",
+            },
         },
     }
     _save_json(summary, run_cfg.out_dir / "summary.json")
 
-    print("[PTV] Completado.", flush=True)
-    print(f"[PTV] detections.csv -> {run_cfg.out_dir / 'detections.csv'}", flush=True)
-    print(f"[PTV] tracks.csv     -> {run_cfg.out_dir / 'tracks.csv'}", flush=True)
-    print(f"[PTV] summary.json   -> {run_cfg.out_dir / 'summary.json'}", flush=True)
+    print(f"[PTV] detections.csv → {run_cfg.out_dir / 'detections.csv'}", flush=True)
+    print(f"[PTV] tracks.csv     → {run_cfg.out_dir / 'tracks.csv'}", flush=True)
+    print(f"[PTV] tracks.json    → {run_cfg.out_dir / 'tracks.json'}", flush=True)
+    print(f"[PTV] summary.json   → {run_cfg.out_dir / 'summary.json'}", flush=True)
 
-    # ── Visualizador HTML offline ─────────────────────────────────
-    ann_dir = run_cfg.out_dir / "annotations"
-    ensure_dir(ann_dir)
-    _save_annotated_frames(frames_buffer, dets_buffer, img_names_buffer,
-                           tracks_filtered, ann_dir,
-                           getattr(run_cfg, "viz_tail_length", 0))
-
-    ann_images = list(ann_dir.glob("*.png"))
-    if ann_images:
-        create_interactive_visualizer(
-            ann_dir   = ann_dir,
-            tracks    = tracks_filtered,
-            out_path  = run_cfg.out_dir / "visualizer.html",
-            width_px  = run_cfg.width_px,
-            height_px = run_cfg.height_px,
-            fps       = run_cfg.fps,
+    # ── Visualizador HTML ─────────────────────────────────────────
+    if run_cfg.save_images and frames_buffer:
+        ann_dir = run_cfg.out_dir / "annotations"
+        ensure_dir(ann_dir)
+        _save_annotated_frames_px(
+            frames_buffer, dets_buffer, schedule,
+            tracks_filtered, ann_dir,
+            px_per_mm=run_cfg.px_per_mm,
+            tail_length=run_cfg.viz_tail_length,
         )
-        print(f"[PTV] visualizer.html -> {run_cfg.out_dir / 'visualizer.html'}", flush=True)
+        ann_images = list(ann_dir.glob("*.png"))
+        if ann_images:
+            create_interactive_visualizer(
+                ann_dir   = ann_dir,
+                tracks    = tracks_filtered,
+                out_path  = run_cfg.out_dir / "visualizer.html",
+                width_px  = run_cfg.width_px,
+                height_px = run_cfg.height_px,
+                fps       = fps,
+            )
+            print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
 
-    # ── Visualizador interactivo matplotlib (post-proceso) ────────
-    #print("[VIZ] Abriendo visualizador interactivo...", flush=True)
-    #viz = InteractiveVisualizer(
-    #    n_frames     = len(images),
-    #    width_px     = run_cfg.width_px,
-    #    height_px    = run_cfg.height_px,
-    #    fps          = run_cfg.fps,
-    #    px_per_mm    = run_cfg.px_per_mm,
-    #    tail_length  = getattr(run_cfg, "viz_tail_length", 0),
-    #    update_every = 1,
-    #)
-    # Cargar todos los frames en el visualizador de una vez
-    #for fi, (gray, dets, img_name) in enumerate(
-    #        zip(frames_buffer, dets_buffer, img_names_buffer)):
-    #    viz._frames[fi] = gray
-    #    viz._dets[fi]   = dets
-    #    viz._tracks[fi] = [
-    #        {
-    #            "id":      tr.track_id,
-    #            "history": [(r.x, r.y, r.frame_idx) for r in tr.history],
-    #        }
-    #        for tr in tracks_filtered if len(tr.history) > 0
-    #    ]
-    #    viz._max_ready = fi
-
-    #viz._current = len(images) - 1
-    #viz.slider.set_val(len(images) - 1)
-    #viz._draw(len(images) - 1)
-    #viz.close()
+    print("[PTV] Completado.", flush=True)

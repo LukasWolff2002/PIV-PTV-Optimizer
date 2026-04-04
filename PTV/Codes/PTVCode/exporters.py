@@ -2,6 +2,15 @@
 exporters.py
 ============
 Exportación de detecciones y tracks a CSV y JSON.
+
+Unidades de salida:
+- Posición  : mm
+- Velocidad : mm/s
+- Aceleración: mm/s²
+- Longitud/ancho: mm
+- Ángulo    : grados
+- dt_s      : segundos (timestep real de la observación)
+- timestamp_s: segundos desde inicio de captura
 """
 from __future__ import annotations
 import csv
@@ -33,37 +42,96 @@ def export_detections_csv(detections: list[Detection], path: Path) -> None:
 
 def export_tracks_csv(
     tracks: list[Track],
-    px_per_mm: float,
     fps: float,
     path: Path,
 ) -> None:
+    """
+    Exporta tracks con todas las unidades en mm.
+
+    Nota: px_per_mm ya fue aplicado en TrackRecord durante el tracking.
+    fps se incluye en el header para referencia pero no se usa para conversión.
+    """
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow([
+            # Identificación
             "track_id", "frame_idx", "image_name",
-            "x_px", "y_px", "x_mm", "y_mm",
-            "vx_px_s", "vy_px_s", "vx_mm_s", "vy_mm_s",
-            "ax_px_s2", "ay_px_s2", "ax_mm_s2", "ay_mm_s2",
+            "region_name", "region_idx",
+            # Tiempo
+            "timestamp_s", "dt_s",
+            # Posición
+            "x_mm", "y_mm",
+            # Velocidad
+            "vx_mm_s", "vy_mm_s",
+            # Aceleración
+            "ax_mm_s2", "ay_mm_s2",
+            # Orientación
             "angle_deg", "omega_deg_s", "alpha_ang_deg_s2",
-            "length_px", "width_px", "det_id",
+            # Geometría
+            "length_mm", "width_mm",
+            # Detección origen
+            "det_id",
         ])
         for tr in tracks:
             for rec in tr.history:
                 w.writerow([
-                    tr.track_id, rec.frame_idx, rec.image_name,
-                    rec.x, rec.y,
-                    rec.x / px_per_mm, rec.y / px_per_mm,
-                    rec.vx, rec.vy,
-                    rec.vx / px_per_mm, rec.vy / px_per_mm,
-                    rec.ax, rec.ay,
-                    rec.ax / px_per_mm, rec.ay / px_per_mm,
-                    rec.angle_deg, rec.omega, rec.alpha_ang,
-                    rec.length_px, rec.width_px, rec.det_id,
+                    tr.track_id,
+                    rec.frame_idx,
+                    rec.image_name,
+                    rec.region_name,
+                    rec.region_idx,
+                    f"{rec.timestamp_s:.6f}",
+                    f"{rec.dt_s:.6f}",
+                    f"{rec.x_mm:.6f}",
+                    f"{rec.y_mm:.6f}",
+                    f"{rec.vx_mm_s:.6f}",
+                    f"{rec.vy_mm_s:.6f}",
+                    f"{rec.ax_mm_s2:.6f}",
+                    f"{rec.ay_mm_s2:.6f}",
+                    f"{rec.angle_deg:.4f}",
+                    f"{rec.omega_deg_s:.4f}",
+                    f"{rec.alpha_ang_deg_s2:.4f}",
+                    f"{rec.length_mm:.4f}",
+                    f"{rec.width_mm:.4f}",
+                    rec.det_id,
                 ])
 
 
-def export_tracks_json(tracks: list[Track], path: Path) -> None:
-    data = {"tracks": [tr.to_dict() for tr in tracks]}
+def export_tracks_json(
+    tracks: list[Track],
+    fps: float,
+    temporal_regions: list | None,
+    path: Path,
+) -> None:
+    """
+    Exporta tracks a JSON con metadata completa de regiones temporales.
+
+    Estructura:
+    {
+      "metadata": {
+        "fps": ...,
+        "units": {...},
+        "temporal_regions": [...]
+      },
+      "tracks": [...]
+    }
+    """
+    data = {
+        "metadata": {
+            "fps": fps,
+            "units": {
+                "position":     "mm",
+                "velocity":     "mm/s",
+                "acceleration": "mm/s2",
+                "angle":        "degrees",
+                "length":       "mm",
+                "width":        "mm",
+                "time":         "seconds",
+            },
+            "temporal_regions": temporal_regions or [],
+        },
+        "tracks": [tr.to_dict() for tr in tracks],
+    }
     path.write_text(
         json.dumps(data, indent=2, ensure_ascii=False, default=np_to_builtin),
         encoding="utf-8",

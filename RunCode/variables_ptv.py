@@ -1,5 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional
 
 # ============================================================
 # VARIABLES Y PARÁMETROS PTV
@@ -8,14 +10,20 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # ---------- DIRECTORIOS PTV ----------
-PTV_BASE_DIR     = PROJECT_ROOT / "PTV" / "Tomas"
-RESULTS_PTV_ROOT = PROJECT_ROOT / "ResultadosPTV"
-RUNS_SEGMENT_DIR = PROJECT_ROOT / "runs" / "segment"
+PTV_BASE_DIR        = PROJECT_ROOT / "PTV" / "Tomas"
+RESULTS_PTV_ROOT    = PROJECT_ROOT / "ResultadosPTV"
+RUNS_SEGMENT_DIR    = PROJECT_ROOT / "runs" / "segment"
+PTV_PREPROCESSED    = PROJECT_ROOT / "PTVPreprocesadas"   # imágenes preprocesadas (se borran al final)
+PTV_MASKS_ROOT      = PROJECT_ROOT / "PTVMascaras"        # máscaras dinámicas PTV  (se borran al final)
+PTV_MODELS_DIR      = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models"
 
 # ---------- FILTRO PARA SELECCIONAR CARPETAS ----------
 PTV_METODO = "ptv"
 
 # ---------- PREPROCESAMIENTO PTV ----------
+DELETE_EXISTING_PRE_PTV   = True
+DELETE_EXISTING_MASKS_PTV = True
+
 CAM_PREPROCESS_PARAMS_PTV = {
     'cam1': {
         'roi_enabled': False,
@@ -71,79 +79,233 @@ CAM_PREPROCESS_PARAMS_PTV = {
     },
 }
 
+# ---------- MÁSCARAS DINÁMICAS PTV ----------
+# Modelo: PTV_MODELS_DIR / f"cam{cam}-ptv-yolo26.pt"
+MASK_CONF_PTV    = 0.25
+MASK_DEVICE_PTV  = "0"
+INVERT_MASK_PTV  = True
+
+def ptv_mask_model_path(cam: int) -> Path:
+    return PTV_MODELS_DIR / f"cam{cam}-ptv-yolo26.pt"
+
 # ---------- MODELO YOLO TRACKING ----------
 YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
 DEVICE_PTV = 0   # 0 = cuda:0 | "cpu" = sin GPU
 
+# ---------- REGIONES TEMPORALES PTV ----------
+# Estructura de un bloque: img_i  →  [skip frames]  →  img_{i+skip+1}
+# El tracker recibe frames espaciados con dt = (skip + 1) / fps
+# Cuando cambia de región, el ABG ajusta el dt automáticamente.
+
+@dataclass
+class PTVTemporalRegion:
+    """
+    Define una región temporal para el muestreo adaptativo en PTV.
+
+    Un bloque PTV es: imagen_seleccionada + skip_frames → siguiente imagen seleccionada.
+    dt efectivo = (skip_frames + 1) / fps
+
+    La secuencia que ve el tracker dentro de una región es:
+        img[start], img[start + (skip+1)], img[start + 2*(skip+1)], ...
+    """
+    name: str
+    start_time: float           # segundos desde inicio de captura
+    end_time: Optional[float]   # None = hasta el final
+    skip_frames: int            # frames a saltar entre observaciones consecutivas
+    fps: float
+    _total_frames_available: Optional[int] = field(default=None, repr=False)
+
+    def __post_init__(self):
+        if self.skip_frames < 0:
+            raise ValueError(
+                f"skip_frames no puede ser negativo en región '{self.name}'"
+            )
+        if self.end_time is not None and self.start_time >= self.end_time:
+            raise ValueError(
+                f"start_time ({self.start_time}) >= end_time ({self.end_time}) "
+                f"en región '{self.name}'"
+            )
+        if self.start_time < 0:
+            raise ValueError(f"start_time no puede ser negativo en región '{self.name}'")
+
+    @property
+    def start_frame(self) -> int:
+        return int(self.start_time * self.fps)
+
+    @property
+    def end_frame(self) -> int:
+        if self.end_time is None:
+            if self._total_frames_available is None:
+                raise RuntimeError(
+                    f"Región '{self.name}' tiene end_time=None pero "
+                    f"_total_frames_available no está seteado."
+                )
+            return self._total_frames_available
+        return int(self.end_time * self.fps)
+
+    def set_total_frames_available(self, total: int) -> None:
+        self._total_frames_available = total
+
+    @property
+    def total_frames(self) -> int:
+        return self.end_frame - self.start_frame
+
+    @property
+    def dt_s(self) -> float:
+        """Δt en segundos entre observaciones consecutivas del tracker."""
+        return (self.skip_frames + 1) / self.fps
+
+    @property
+    def dt_ms(self) -> float:
+        return self.dt_s * 1000.0
+
+    @property
+    def stride(self) -> int:
+        """Paso en frames originales entre observaciones: skip + 1."""
+        return self.skip_frames + 1
+
+    @property
+    def n_selected_frames(self) -> int:
+        """Número de frames que el tracker efectivamente verá en esta región."""
+        if self.total_frames <= 0:
+            return 0
+        return max(0, (self.total_frames - 1) // self.stride + 1)
+
+    def to_dict(self) -> dict:
+        return {
+            "name":         self.name,
+            "start_time":   self.start_time,
+            "end_time":     self.end_time,
+            "start_frame":  self.start_frame,
+            "end_frame":    self.end_frame,
+            "total_frames": self.total_frames,
+            "fps":          self.fps,
+            "skip_frames":  self.skip_frames,
+            "stride":       self.stride,
+            "dt_ms":        self.dt_ms,
+            "n_selected":   self.n_selected_frames,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PTVTemporalRegion":
+        return cls(
+            name=d["name"],
+            start_time=d["start_time"],
+            end_time=d["end_time"],
+            skip_frames=d["skip_frames"],
+            fps=d["fps"],
+        )
+
+    def __repr__(self) -> str:
+        end_str = f"{self.end_time:.1f}s" if self.end_time is not None else "END"
+        return (
+            f"PTVTemporalRegion('{self.name}', "
+            f"t={self.start_time:.1f}-{end_str}, "
+            f"skip={self.skip_frames}, Δt={self.dt_ms:.2f}ms)"
+        )
+
+
+# ---------- REGIONES TEMPORALES CARBOPOL 02 ----------
+TEMPORAL_REGIONS_PTV_CAR02 = {
+    1: [
+        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=6.5,  skip_frames=0,  fps=220.0),
+        PTVTemporalRegion(name="media_velocidad", start_time=6.5,  end_time=10.0, skip_frames=2,  fps=220.0),
+        PTVTemporalRegion(name="baja_velocidad",  start_time=10.0, end_time=20.0, skip_frames=8,  fps=220.0),
+    ],
+    2: [
+        PTVTemporalRegion(name="alta_velocidad",      start_time=0.0,  end_time=1.5,  skip_frames=0,  fps=220.0),
+        PTVTemporalRegion(name="media_velocidad",     start_time=1.5,  end_time=3.0,  skip_frames=2,  fps=220.0),
+        PTVTemporalRegion(name="baja_velocidad",      start_time=3.0,  end_time=6.0,  skip_frames=4,  fps=220.0),
+        PTVTemporalRegion(name="muy_baja_velocidad",  start_time=6.0,  end_time=20.0, skip_frames=8,  fps=220.0),
+    ],
+    3: [
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=2.0,  skip_frames=0,  fps=220.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=2.0,  end_time=5.0,  skip_frames=2,  fps=220.0),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=5.0,  end_time=7.0,  skip_frames=4,  fps=220.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=7.0,  end_time=20.0, skip_frames=8,  fps=220.0),
+    ],
+    4: [
+        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=4.5,  skip_frames=0,  fps=660.0),
+        PTVTemporalRegion(name="media_velocidad", start_time=4.5,  end_time=8.0,  skip_frames=2,  fps=660.0),
+        PTVTemporalRegion(name="baja_velocidad",  start_time=8.0,  end_time=20.0, skip_frames=8,  fps=660.0),
+    ],
+}
+
+# ---------- REGIONES TEMPORALES CARBOPOL 05 ----------
+TEMPORAL_REGIONS_PTV_CAR05 = {
+    1: [
+        PTVTemporalRegion(name="alta_velocidad",          start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0),
+        PTVTemporalRegion(name="media_velocidad",         start_time=0.2,  end_time=5.0,  skip_frames=1,  fps=220.0),
+        PTVTemporalRegion(name="baja_velocidad",          start_time=5.0,  end_time=8.0,  skip_frames=2,  fps=220.0),
+        PTVTemporalRegion(name="muy_baja_velocidad",      start_time=8.0,  end_time=15.0, skip_frames=4,  fps=220.0),
+        PTVTemporalRegion(name="extrema_baja_velocidad",  start_time=15.0, end_time=40.0, skip_frames=8,  fps=220.0),
+    ],
+    2: [
+        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=15.0, skip_frames=8,  fps=220.0),
+        PTVTemporalRegion(name="media_velocidad", start_time=15.0, end_time=40.0, skip_frames=16, fps=220.0),
+    ],
+    3: [
+        PTVTemporalRegion(name="sin_datos",      start_time=0.0,  end_time=8.0,  skip_frames=0,  fps=220.0),
+        PTVTemporalRegion(name="alta_velocidad", start_time=8.0,  end_time=40.0, skip_frames=16, fps=220.0),
+    ],
+    4: [
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0,  fps=660.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=7.5,  skip_frames=2,  fps=660.0),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=7.5,  end_time=20.0, skip_frames=4,  fps=660.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=20.0, end_time=40.0, skip_frames=8,  fps=660.0),
+    ],
+}
+
+
+def get_ptv_temporal_regions(cam: int, carbopol: str) -> list[PTVTemporalRegion] | None:
+    """Retorna regiones temporales PTV para una cámara y carbopol."""
+    carbopol_normalized = carbopol.zfill(2)
+    if carbopol_normalized == "02":
+        return TEMPORAL_REGIONS_PTV_CAR02.get(cam)
+    elif carbopol_normalized == "05":
+        return TEMPORAL_REGIONS_PTV_CAR05.get(cam)
+    return None
+
+
 # ---------- PARÁMETROS PTV ----------
 MAX_IMAGES      = 2200
-ALPHA           = 0.95   # corrección de posición (filtro ABG)
-BETA            = 0.95   # corrección de velocidad
-GAMMA           = 0.05   # corrección de aceleración
-CONF_TRACK      = 0.1    # confianza mínima del detector YOLO
-MIN_FRAMES_KEEP = 5      # mínimo de frames para exportar un track
+ALPHA           = 0.95
+BETA            = 0.95
+GAMMA           = 0.05
+CONF_TRACK      = 0.1
+MIN_FRAMES_KEEP = 5
 ANNOTATE        = True
-MAX_MISSES      = 2      # 0 = track termina inmediatamente si no se detecta
-                         # 1-3 = tolera N frames sin detección (oclusiones)
+MAX_MISSES      = 2 #Cuantos frames puede faltar una partícula antes de eliminar el track
 
-# ---------- GUARDAR IMÁGENES ----------
-# True  → guarda carpetas annotations/ (detecciones) y tracks/ (trayectorias)
-# False → no guarda ninguna imagen, solo CSV/JSON y el gráfico interactivo
 SAVE_IMAGES = True
 
-# ---------- GATE ESPACIAL (referencia para annotate_frame) ----------
 GATE_X     = 10
 GATE_Y     = 10
 GATE_ANGLE = 5
 
-# ---------- DIMENSIONES DE LA FIBRA ----------
-# Usadas para normalizar el vector de similitud.
-# px_per_mm viene de CAM_PROFILES en pipeline_global.py según la cámara.
-FIBER_LENGTH_MM = 13.0   # largo real de la fibra en mm
-FIBER_WIDTH_MM  = 0.2    # ancho real de la fibra en mm
+FIBER_LENGTH_MM = 13.0
+FIBER_WIDTH_MM  = 0.2
 
-# ---------- PESOS DEL VECTOR DE SIMILITUD ----------
-# Vector: [w1·cos(2θ), w2·sin(2θ), w3·L/L_ref, w4·cx/W, w5·cy/H]
-# Usar cos(2θ)/sin(2θ) resuelve la simetría bidireccional:
-#   fibra a 0° y la misma a 180° → mismo vector.
-#
-# Pesos recomendados: posición > ángulo > largo
-#   - (cx, cy) tienen el doble de peso → la posición es el criterio principal
-#   - cos2θ, sin2θ tienen peso 1.0    → ángulo secundario
-#   - largo tiene poco peso (0.3)     → varía según perspectiva de la fibra
 FEAT_WEIGHTS = (1.0, 1.0, 0.3, 2.0, 2.0)
-# (w_cos2θ, w_sin2θ, w_largo, w_cx, w_cy)
-
-# ---------- PARÁMETROS DE SIMILITUD Y GATE — POR CÁMARA ----------
-# sim_threshold : similitud coseno mínima para aceptar un match [0, 1]
-#   Bajar si hay pocos tracks (0.65-0.75), subir para matches más estrictos.
-#
-# max_dist_mm   : distancia máxima entre centroides EN MM para considerar match.
-#   Se convierte a píxeles automáticamente en pipeline_global usando px_per_mm.
-#   Ajustar según desplazamiento máximo esperado de la fibra entre frames.
-#   A 220 fps las fibras se mueven poco — 2-5 mm suele ser suficiente.
-#   A 660 fps (cam4) el movimiento es aún menor.
 
 CAM_TRACKING_PARAMS = {
     1: dict(sim_threshold=0.99, max_dist_mm=2.0),
     2: dict(sim_threshold=0.99, max_dist_mm=2.0),
     3: dict(sim_threshold=0.99, max_dist_mm=2.0),
-    4: dict(sim_threshold=0.99, max_dist_mm=2.0),   # 660 fps → menos movimiento
+    4: dict(sim_threshold=0.99, max_dist_mm=2.0),
 }
 
-# ---------- SAHI INFERENCE ----------
-# Deben coincidir con los parámetros usados en entrenamiento (train_yolo26.py)
-SAHI_SCALE_FACTOR  = 2      # upscale ×4 antes de tilear
-SAHI_TILE_SIZE     = 640    # tamaño del tile en px
-SAHI_OVERLAP_RATIO = 0.1    # solapamiento entre tiles
-SAHI_IOU_THRESHOLD = 0.3    # NMS entre tiles solapados
+SAHI_SCALE_FACTOR  = 2
+SAHI_TILE_SIZE     = 640
+SAHI_OVERLAP_RATIO = 0.1
+SAHI_IOU_THRESHOLD = 0.3
 
-# ---------- VISUALIZADOR EN TIEMPO REAL ----------
-VIZ_TAIL_LENGTH  = 0    # 0 = trayectoria completa; N = últimos N frames
-VIZ_UPDATE_EVERY = 1    # refrescar cada N frames (subir a 5 si va lento)
+VIZ_TAIL_LENGTH  = 0
+VIZ_UPDATE_EVERY = 1
 
-# ---------- CLEANUP ----------
 DELETE_PREDICT_FOLDERS = False
+
+USE_TEMPORAL_REGIONS_PTV = True  # True = regiones adaptativas, False = sin skip
 
 
 # ─────────────────────────────────────────────
@@ -151,26 +313,15 @@ DELETE_PREDICT_FOLDERS = False
 # ─────────────────────────────────────────────
 
 def get_tracking_params(cam: int) -> dict:
-    """
-    Retorna sim_threshold y max_dist_mm para una cámara.
-    Fallback a cam1 si la cámara no está definida.
-    """
     return CAM_TRACKING_PARAMS.get(cam, CAM_TRACKING_PARAMS[1])
 
 
 def get_l_ref_px(cam: int, cam_profiles: dict) -> float:
-    """
-    Calcula el largo de referencia en píxeles para normalizar el vector de similitud.
-    Usa px_per_mm de CAM_PROFILES y FIBER_LENGTH_MM.
-    """
     px_per_mm = cam_profiles.get(cam, {}).get("px_per_mm", 7.8)
     return FIBER_LENGTH_MM * px_per_mm
 
 
 def get_max_dist_px(cam: int, cam_profiles: dict) -> float:
-    """
-    Convierte max_dist_mm a píxeles usando px_per_mm de la cámara.
-    """
-    px_per_mm  = cam_profiles.get(cam, {}).get("px_per_mm", 7.8)
+    px_per_mm   = cam_profiles.get(cam, {}).get("px_per_mm", 7.8)
     max_dist_mm = get_tracking_params(cam)["max_dist_mm"]
     return max_dist_mm * px_per_mm
