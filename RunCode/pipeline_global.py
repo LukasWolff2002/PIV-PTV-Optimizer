@@ -68,13 +68,13 @@ CAM_PROFILES = {
     1: dict(
         fps=220, dt_ms=1000*(1/220), px_per_mm=8,
         width_px=1024, height_px=1024,
-        apply_dynamic_mask=True,
+        apply_dynamic_mask=False,
         apply_static_mask=True,
     ),
     2: dict(
         fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,
         width_px=1024, height_px=1024,
-        apply_dynamic_mask=True,
+        apply_dynamic_mask=False,
         apply_static_mask=True,
     ),
     3: dict(

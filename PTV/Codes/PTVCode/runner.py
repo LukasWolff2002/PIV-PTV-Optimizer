@@ -113,6 +113,39 @@ def _build_frame_schedule(
     return schedule
 
 
+def _load_schedule_from_json(images_dir: Path) -> list[dict] | None:
+    """
+    Carga el schedule generado por preprocess_run_ptv.py.
+
+    Retorna lista de dicts con claves:
+        img_path, frame_idx_original, timestamp_s, dt_s, region_name, region_idx
+    O None si no existe el archivo (fallback al cálculo en memoria).
+    """
+    schedule_path = images_dir / "schedule.json"
+    if not schedule_path.exists():
+        return None
+    try:
+        entries = json.loads(schedule_path.read_text(encoding="utf-8"))
+        schedule = []
+        for e in entries:
+            img_path = images_dir / e["preprocessed_name"]
+            if not img_path.exists():
+                print(f"[WARN] schedule.json: imagen no encontrada: {img_path}", flush=True)
+                continue
+            schedule.append({
+                "img_path":           img_path,
+                "frame_idx_original": int(e["frame_idx_original"]),
+                "timestamp_s":        float(e["timestamp_s"]),
+                "dt_s":               float(e["dt_s"]),
+                "region_name":        str(e["region_name"]),
+                "region_idx":         int(e["region_idx"]),
+            })
+        return schedule
+    except Exception as ex:
+        print(f"[WARN] No se pudo leer schedule.json: {ex}", flush=True)
+        return None
+
+
 def _build_frame_schedule_no_regions(
     all_images: list[Path],
     fps: float,
@@ -315,22 +348,52 @@ def _save_annotated_frames_px(
 def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     ensure_dir(run_cfg.out_dir)
 
-    # ── Listar imágenes preprocesadas ─────────────────────────────
-    # El skip ya fue aplicado en preprocess_run_ptv.py: images_dir solo
-    # contiene las imágenes a analizar (desde skip_first_images en adelante).
-    all_images = _list_images(run_cfg.images_dir, max_images=run_cfg.max_images)
+    # ── Listar imágenes preprocesadas y construir schedule ────────
+    # PTVPreprocesadas/ ya contiene SOLO las imágenes que el tracker necesita
+    # (el preproceso calculó el schedule y copió solo esas).
+    # Leemos schedule.json para recuperar la metadata (dt_s, region, timestamp)
+    # sin tener que recalcular el schedule desde cero.
+    all_images = _list_images(run_cfg.images_dir)
     if not all_images:
         raise RuntimeError(f"No hay imágenes preprocesadas en: {run_cfg.images_dir}")
 
     fps = run_cfg.fps
 
-    # ── Construir schedule de frames ──────────────────────────────
-    if run_cfg.use_temporal_regions and run_cfg.temporal_regions:
-        schedule = _build_frame_schedule(all_images, fps, run_cfg.temporal_regions)
-        mode_str = f"regiones temporales ({len(run_cfg.temporal_regions)} regiones)"
+    # Intentar cargar schedule desde JSON (generado por preprocess_run_ptv.py)
+    schedule = _load_schedule_from_json(run_cfg.images_dir)
+
+    if schedule is not None:
+        mode_str = f"schedule.json ({len(schedule)} frames)"
+    elif run_cfg.use_temporal_regions and run_cfg.temporal_regions:
+        # Fallback: schedule.json no existe (preproceso anterior sin esta versión).
+        # En este caso las imágenes en PTVPreprocesadas/ deberían ser la selección
+        # correcta, pero no tenemos los frame_idx_original reales. Usamos índices
+        # locales (0, 1, 2...) — los timestamps serán aproximados.
+        # Para timestamps correctos, re-ejecuta preprocess_run_ptv.py.
+        print(
+            "[WARN] schedule.json no encontrado en PTVPreprocesadas/. "
+            "Los frame_idx_original y timestamps serán índices locales (aproximados). "
+            "Re-ejecuta preprocess_run_ptv.py para timestamps correctos.",
+            flush=True,
+        )
+        # Construir schedule local: procesar todas las imágenes en orden,
+        # asignando dt_s de la primera región como valor por defecto.
+        dt_s_default = (int(run_cfg.temporal_regions[0]["skip_frames"]) + 1) / fps
+        schedule = [
+            {
+                "img_path":           p,
+                "frame_idx_original": i,
+                "timestamp_s":        i / fps,
+                "dt_s":               dt_s_default,
+                "region_name":        "unknown",
+                "region_idx":         0,
+            }
+            for i, p in enumerate(all_images)
+        ]
+        mode_str = f"fallback local ({len(schedule)} frames, timestamps aproximados)"
     else:
         schedule = _build_frame_schedule_no_regions(all_images, fps)
-        mode_str = "sin regiones (frames consecutivos)"
+        mode_str = "frames consecutivos (sin regiones)"
 
     print(f"[PTV] images_dir (preprocesadas) : {run_cfg.images_dir}", flush=True)
     print(f"[PTV] out_dir                    : {run_cfg.out_dir}", flush=True)
@@ -498,25 +561,25 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     print(f"[PTV] summary.json   → {run_cfg.out_dir / 'summary.json'}", flush=True)
 
     # ── Visualizador HTML ─────────────────────────────────────────
-    if run_cfg.save_images and frames_buffer:
-        ann_dir = run_cfg.out_dir / "annotations"
-        ensure_dir(ann_dir)
-        _save_annotated_frames_px(
-            frames_buffer, dets_buffer, schedule,
-            tracks_filtered, ann_dir,
-            px_per_mm=run_cfg.px_per_mm,
-            tail_length=run_cfg.viz_tail_length,
-        )
-        ann_images = list(ann_dir.glob("*.png"))
-        if ann_images:
-            create_interactive_visualizer(
-                ann_dir   = ann_dir,
-                tracks    = tracks_filtered,
-                out_path  = run_cfg.out_dir / "visualizer.html",
-                width_px  = run_cfg.width_px,
-                height_px = run_cfg.height_px,
-                fps       = fps,
-            )
-            print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
+    #if run_cfg.save_images and frames_buffer:
+    #    ann_dir = run_cfg.out_dir / "annotations"
+    #    ensure_dir(ann_dir)
+    #    _save_annotated_frames_px(
+    #        frames_buffer, dets_buffer, schedule,
+    #        tracks_filtered, ann_dir,
+    #        px_per_mm=run_cfg.px_per_mm,
+    #        tail_length=run_cfg.viz_tail_length,
+    #    )
+    #    ann_images = list(ann_dir.glob("*.png"))
+    #    if ann_images:
+    #        create_interactive_visualizer(
+    #            ann_dir   = ann_dir,
+    #            tracks    = tracks_filtered,
+    #            out_path  = run_cfg.out_dir / "visualizer.html",
+    #            width_px  = run_cfg.width_px,
+    #            height_px = run_cfg.height_px,
+    #            fps       = fps,
+    #        )
+    #        print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
 
     print("[PTV] Completado.", flush=True)

@@ -216,7 +216,7 @@ TEMPORAL_REGIONS_PTV_CAR02 = {
         PTVTemporalRegion(name="alta_velocidad",      start_time=0.0,  end_time=1.5,  skip_frames=0,  fps=220.0),
         PTVTemporalRegion(name="media_velocidad",     start_time=1.5,  end_time=3.0,  skip_frames=2,  fps=220.0),
         PTVTemporalRegion(name="baja_velocidad",      start_time=3.0,  end_time=6.0,  skip_frames=4,  fps=220.0),
-        PTVTemporalRegion(name="muy_baja_velocidad",  start_time=6.0,  end_time=20.0, skip_frames=8,  fps=220.0),
+        PTVTemporalRegion(name="muy_baja_velocidad",  start_time=6.0,  end_time=20.0, skip_frames=10,  fps=220.0),
     ],
     3: [
         PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=2.0,  skip_frames=0,  fps=220.0),
