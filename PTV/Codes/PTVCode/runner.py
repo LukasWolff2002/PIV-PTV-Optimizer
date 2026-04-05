@@ -4,7 +4,7 @@ runner.py
 Loop principal del PTV con:
 - Imágenes preprocesadas (leídas desde PTVPreprocesadas/)
 - Procesamiento por regiones temporales con skip_frames variable
-- dt_s variable pasado al tracker frame a frame
+- dt_s y max_dist_px variables pasados al tracker frame a frame
 - Resultados en mm
 - Prefetch asíncrono de imágenes (CPU overlapped con GPU)
 """
@@ -13,7 +13,6 @@ import json
 import math
 import queue
 import re
-import shutil
 import threading
 from pathlib import Path
 
@@ -65,22 +64,25 @@ def _build_frame_schedule(
     all_images: list[Path],
     fps: float,
     temporal_regions: list[dict],
+    global_max_dist_px: float,
+    px_per_mm: float,
 ) -> list[dict]:
     """
     Construye la lista ordenada de frames que el tracker debe procesar,
-    con su dt_s, region_name y region_idx correspondientes.
+    con su dt_s, max_dist_px, region_name y region_idx correspondientes.
+
+    max_dist_px por entry:
+        - Si la región define max_dist_mm → convierte a px con px_per_mm.
+        - Si no (None) → usa global_max_dist_px como fallback.
 
     Estructura de un bloque PTV:
         img[i], img[i + stride], img[i + 2*stride], ...
     donde stride = skip_frames + 1.
 
-    Entre regiones NO hay gap: la siguiente región comienza donde termina la anterior.
-    Si el índice de inicio de una región no coincide con un frame seleccionado
-    de la región anterior, se respeta el índice absoluto del frame (no hay duplicados).
-
     Returns:
         Lista de dicts con claves:
-            img_path, frame_idx_original, timestamp_s, dt_s, region_name, region_idx
+            img_path, frame_idx_original, timestamp_s,
+            dt_s, max_dist_px, region_name, region_idx
     """
     n_total = len(all_images)
     schedule: list[dict] = []
@@ -94,61 +96,36 @@ def _build_frame_schedule(
         stride      = skip + 1
         dt_s        = stride / fps
 
+        # Gate espacial: región override o fallback global
+        region_max_dist_mm = r.get("max_dist_mm")   # None si no está en el JSON
+        if region_max_dist_mm is not None:
+            max_dist_px = float(region_max_dist_mm) * px_per_mm
+        else:
+            max_dist_px = global_max_dist_px
+
         idx = start_frame
         while idx < end_frame:
             if idx < n_total and idx not in seen_idx:
                 schedule.append({
-                    "img_path":          all_images[idx],
+                    "img_path":           all_images[idx],
                     "frame_idx_original": idx,
-                    "timestamp_s":       idx / fps,
-                    "dt_s":              dt_s,
-                    "region_name":       r["name"],
-                    "region_idx":        r_idx,
+                    "timestamp_s":        idx / fps,
+                    "dt_s":               dt_s,
+                    "max_dist_px":        max_dist_px,
+                    "region_name":        r["name"],
+                    "region_idx":         r_idx,
                 })
                 seen_idx.add(idx)
             idx += stride
 
-    # Garantizar orden por frame_idx_original
     schedule.sort(key=lambda x: x["frame_idx_original"])
     return schedule
-
-
-def _load_schedule_from_json(images_dir: Path) -> list[dict] | None:
-    """
-    Carga el schedule generado por preprocess_run_ptv.py.
-
-    Retorna lista de dicts con claves:
-        img_path, frame_idx_original, timestamp_s, dt_s, region_name, region_idx
-    O None si no existe el archivo (fallback al cálculo en memoria).
-    """
-    schedule_path = images_dir / "schedule.json"
-    if not schedule_path.exists():
-        return None
-    try:
-        entries = json.loads(schedule_path.read_text(encoding="utf-8"))
-        schedule = []
-        for e in entries:
-            img_path = images_dir / e["preprocessed_name"]
-            if not img_path.exists():
-                print(f"[WARN] schedule.json: imagen no encontrada: {img_path}", flush=True)
-                continue
-            schedule.append({
-                "img_path":           img_path,
-                "frame_idx_original": int(e["frame_idx_original"]),
-                "timestamp_s":        float(e["timestamp_s"]),
-                "dt_s":               float(e["dt_s"]),
-                "region_name":        str(e["region_name"]),
-                "region_idx":         int(e["region_idx"]),
-            })
-        return schedule
-    except Exception as ex:
-        print(f"[WARN] No se pudo leer schedule.json: {ex}", flush=True)
-        return None
 
 
 def _build_frame_schedule_no_regions(
     all_images: list[Path],
     fps: float,
+    global_max_dist_px: float,
 ) -> list[dict]:
     """Fallback: todos los frames consecutivos, dt = 1/fps."""
     dt_s = 1.0 / fps
@@ -158,6 +135,7 @@ def _build_frame_schedule_no_regions(
             "frame_idx_original": i,
             "timestamp_s":        i / fps,
             "dt_s":               dt_s,
+            "max_dist_px":        global_max_dist_px,
             "region_name":        "default",
             "region_idx":         0,
         }
@@ -170,19 +148,12 @@ def _build_frame_schedule_no_regions(
 # ─────────────────────────────────────────────
 
 def _load_one_preprocessed(img_path: Path) -> tuple[Path, np.ndarray]:
-    """
-    Carga imagen preprocesada (ya lista para YOLO).
-    Solo convierte a uint8 RGB sin aplicar filtros adicionales.
-    """
-    raw = read_image_any(img_path)
+    raw    = read_image_any(img_path)
     rgb_u8 = normalize_to_uint8_for_yolo(raw)
     return img_path, rgb_u8
 
 
-def _prefetch_worker(
-    schedule: list[dict],
-    out_q: queue.Queue,
-) -> None:
+def _prefetch_worker(schedule: list[dict], out_q: queue.Queue) -> None:
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -193,84 +164,12 @@ def _prefetch_worker(
         for fut in futures:
             out_q.put(fut.result())
 
-    out_q.put(None)  # sentinel
+    out_q.put(None)
 
 
 # ─────────────────────────────────────────────
 # GUARDAR FRAMES ANOTADOS
 # ─────────────────────────────────────────────
-
-def _save_annotated_frames(
-    frames: list[np.ndarray],
-    dets_per_frame: list[list],
-    schedule: list[dict],
-    tracks: list[Track],
-    ann_dir: Path,
-    tail_length: int = 0,
-) -> None:
-    import colorsys
-
-    track_colors: dict[int, tuple] = {}
-
-    def _color(tid: int) -> tuple:
-        if tid not in track_colors:
-            hue = (tid * 137.508) % 360
-            r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.85, 0.95)
-            track_colors[tid] = (int(b * 255), int(g * 255), int(r * 255))
-        return track_colors[tid]
-
-    # Mapear frame_idx_original → índice en schedule
-    fidx_to_sched = {entry["frame_idx_original"]: i for i, entry in enumerate(schedule)}
-
-    # Pre-indexar history por track: frame_idx_original → (x_mm, y_mm)
-    # Para visualización en px: x_mm * px_per_mm  (recuperar px del mm)
-    # Pero en frames_buffer guardamos el array ya en px, así que usamos x_mm directamente
-    # en el visualizador (el HTML ya está en px porque dibuja sobre la imagen).
-    # Nota: las posiciones en TrackRecord están en mm; para anotación recuperamos px
-    # usando px_per_mm — pero no tenemos px_per_mm aquí. Guardamos en dict (x_mm, y_mm).
-    track_history: dict[int, list[tuple]] = {}
-    for tr in tracks:
-        track_history[tr.track_id] = [
-            (r.x_mm, r.y_mm, r.frame_idx)
-            for r in tr.history
-        ]
-
-    for sched_i, (gray, dets, entry) in enumerate(
-        zip(frames, dets_per_frame, schedule)
-    ):
-        canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        fi_orig = entry["frame_idx_original"]
-
-        for tr in tracks:
-            hist_mm = [
-                (x, y) for x, y, fi in track_history[tr.track_id]
-                if fi <= fi_orig
-            ]
-            if tail_length > 0:
-                hist_mm = hist_mm[-tail_length:]
-            if len(hist_mm) < 1:
-                continue
-
-            color = _color(tr.track_id)
-            n = len(hist_mm)
-
-            # Nota: dibujamos en espacio de mm — el canvas es la imagen en px,
-            # así que convertimos con el factor guardado en TrackRecord.
-            # Como no tenemos px_per_mm en este scope, recuperamos las coordenadas
-            # en px desde las detecciones originales cuando existen.
-            # Para la trayectoria usamos las posiciones en mm directamente
-            # con un factor dummy: se verán en unidades de mm sobre la imagen en px.
-            # En producción real, pasar px_per_mm a esta función.
-            if len(hist_mm) >= 2:
-                for i in range(1, n):
-                    # Las coordenadas están en mm; para overlay en imagen px
-                    # esto es incorrecto sin px_per_mm, pero se mantiene la lógica
-                    # para que el usuario lo corrija si necesita anotación en px.
-                    pass
-
-        out_png = ann_dir / f"{Path(entry['img_path'].name).stem}.png"
-        cv2.imwrite(str(out_png), canvas)
-
 
 def _save_annotated_frames_px(
     frames: list[np.ndarray],
@@ -281,9 +180,7 @@ def _save_annotated_frames_px(
     px_per_mm: float,
     tail_length: int = 0,
 ) -> None:
-    """
-    Versión con px_per_mm para convertir posiciones mm → px al dibujar.
-    """
+    """Dibuja detecciones y trayectorias en coordenadas px sobre los frames."""
     import colorsys
 
     track_colors: dict[int, tuple] = {}
@@ -295,6 +192,7 @@ def _save_annotated_frames_px(
             track_colors[tid] = (int(b * 255), int(g * 255), int(r * 255))
         return track_colors[tid]
 
+    # Pre-indexar history: track_id → lista (x_px, y_px, frame_idx)
     track_history: dict[int, list[tuple]] = {}
     for tr in tracks:
         track_history[tr.track_id] = [
@@ -303,10 +201,10 @@ def _save_annotated_frames_px(
         ]
 
     for gray, dets, entry in zip(frames, dets_per_frame, schedule):
-        canvas = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        canvas  = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         fi_orig = entry["frame_idx_original"]
 
-        # Detecciones (en px, no necesitan conversión)
+        # Detecciones (ya en px)
         for d in dets:
             cx_px = int(round(d.cx))
             cy_px = int(round(d.cy))
@@ -314,11 +212,13 @@ def _save_annotated_frames_px(
             ang   = math.radians(d.angle_deg)
             dx_px = int(round(math.cos(ang) * half))
             dy_px = int(round(math.sin(ang) * half))
-            cv2.line(canvas, (cx_px - dx_px, cy_px - dy_px),
-                              (cx_px + dx_px, cy_px + dy_px), (0, 220, 255), 1)
+            cv2.line(canvas,
+                     (cx_px - dx_px, cy_px - dy_px),
+                     (cx_px + dx_px, cy_px + dy_px),
+                     (0, 220, 255), 1)
             cv2.circle(canvas, (cx_px, cy_px), 2, (0, 220, 255), -1)
 
-        # Trayectorias (convertidas a px)
+        # Trayectorias (mm → px)
         for tr in tracks:
             hist_px = [
                 (int(round(x)), int(round(y)))
@@ -327,7 +227,7 @@ def _save_annotated_frames_px(
             ]
             if tail_length > 0:
                 hist_px = hist_px[-tail_length:]
-            if len(hist_px) < 1:
+            if not hist_px:
                 continue
             color = _color(tr.track_id)
             n = len(hist_px)
@@ -348,69 +248,50 @@ def _save_annotated_frames_px(
 def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     ensure_dir(run_cfg.out_dir)
 
-    # ── Listar imágenes preprocesadas y construir schedule ────────
-    # PTVPreprocesadas/ ya contiene SOLO las imágenes que el tracker necesita
-    # (el preproceso calculó el schedule y copió solo esas).
-    # Leemos schedule.json para recuperar la metadata (dt_s, region, timestamp)
-    # sin tener que recalcular el schedule desde cero.
-    all_images = _list_images(run_cfg.images_dir)
+    all_images = _list_images(run_cfg.images_dir, max_images=run_cfg.max_images)
     if not all_images:
         raise RuntimeError(f"No hay imágenes preprocesadas en: {run_cfg.images_dir}")
 
-    fps = run_cfg.fps
+    fps            = run_cfg.fps
+    px_per_mm      = run_cfg.px_per_mm
+    # Gate global (fallback para regiones sin max_dist_mm explícito)
+    global_max_dist_px = run_cfg.max_dist_px
 
-    # Intentar cargar schedule desde JSON (generado por preprocess_run_ptv.py)
-    schedule = _load_schedule_from_json(run_cfg.images_dir)
-
-    if schedule is not None:
-        mode_str = f"schedule.json ({len(schedule)} frames)"
-    elif run_cfg.use_temporal_regions and run_cfg.temporal_regions:
-        # Fallback: schedule.json no existe (preproceso anterior sin esta versión).
-        # En este caso las imágenes en PTVPreprocesadas/ deberían ser la selección
-        # correcta, pero no tenemos los frame_idx_original reales. Usamos índices
-        # locales (0, 1, 2...) — los timestamps serán aproximados.
-        # Para timestamps correctos, re-ejecuta preprocess_run_ptv.py.
-        print(
-            "[WARN] schedule.json no encontrado en PTVPreprocesadas/. "
-            "Los frame_idx_original y timestamps serán índices locales (aproximados). "
-            "Re-ejecuta preprocess_run_ptv.py para timestamps correctos.",
-            flush=True,
+    # ── Construir schedule de frames ──────────────────────────────
+    if run_cfg.use_temporal_regions and run_cfg.temporal_regions:
+        schedule = _build_frame_schedule(
+            all_images, fps,
+            run_cfg.temporal_regions,
+            global_max_dist_px,
+            px_per_mm,
         )
-        # Construir schedule local: procesar todas las imágenes en orden,
-        # asignando dt_s de la primera región como valor por defecto.
-        dt_s_default = (int(run_cfg.temporal_regions[0]["skip_frames"]) + 1) / fps
-        schedule = [
-            {
-                "img_path":           p,
-                "frame_idx_original": i,
-                "timestamp_s":        i / fps,
-                "dt_s":               dt_s_default,
-                "region_name":        "unknown",
-                "region_idx":         0,
-            }
-            for i, p in enumerate(all_images)
-        ]
-        mode_str = f"fallback local ({len(schedule)} frames, timestamps aproximados)"
+        mode_str = f"regiones temporales ({len(run_cfg.temporal_regions)} regiones)"
     else:
-        schedule = _build_frame_schedule_no_regions(all_images, fps)
-        mode_str = "frames consecutivos (sin regiones)"
+        schedule = _build_frame_schedule_no_regions(
+            all_images, fps, global_max_dist_px,
+        )
+        mode_str = "sin regiones (frames consecutivos)"
 
     print(f"[PTV] images_dir (preprocesadas) : {run_cfg.images_dir}", flush=True)
     print(f"[PTV] out_dir                    : {run_cfg.out_dir}", flush=True)
     print(f"[PTV] total imágenes disponibles : {len(all_images)}", flush=True)
     print(f"[PTV] frames en schedule         : {len(schedule)}", flush=True)
     print(f"[PTV] modo temporal              : {mode_str}", flush=True)
-    print(f"[PTV] px_per_mm                  : {run_cfg.px_per_mm}", flush=True)
+    print(f"[PTV] px_per_mm                  : {px_per_mm}", flush=True)
+    print(f"[PTV] gate global (fallback)     : {global_max_dist_px:.1f} px "
+          f"({global_max_dist_px / px_per_mm:.2f} mm)", flush=True)
 
     if run_cfg.use_temporal_regions and run_cfg.temporal_regions:
         for r in run_cfg.temporal_regions:
             skip   = r["skip_frames"]
             dt_ms  = (skip + 1) / fps * 1000
             end_t  = r["end_time"] if r["end_time"] is not None else "END"
+            gate_mm = r.get("max_dist_mm")
+            gate_str = f"{gate_mm} mm" if gate_mm is not None else f"{global_max_dist_px / px_per_mm:.2f} mm (global)"
             print(
                 f"[PTV]   [{r['name']}] "
                 f"t={r['start_time']:.1f}s→{end_t}  "
-                f"skip={skip}  Δt={dt_ms:.2f}ms",
+                f"skip={skip}  Δt={dt_ms:.2f}ms  gate={gate_str}",
                 flush=True,
             )
 
@@ -449,17 +330,19 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
             break
         img_path, rgb_u8 = item
 
-        dt_s         = entry["dt_s"]
-        fi_orig      = entry["frame_idx_original"]
-        timestamp_s  = entry["timestamp_s"]
-        region_name  = entry["region_name"]
-        region_idx   = entry["region_idx"]
+        dt_s          = entry["dt_s"]
+        max_dist_px   = entry["max_dist_px"]   # gate específico de esta región
+        fi_orig       = entry["frame_idx_original"]
+        timestamp_s   = entry["timestamp_s"]
+        region_name   = entry["region_name"]
+        region_idx    = entry["region_idx"]
 
         dt_ms_display = dt_s * 1000
         print(
             f"[PTV] frame {sched_i+1}/{n_schedule} "
             f"(orig={fi_orig}) {img_path.name} "
-            f"[{region_name} Δt={dt_ms_display:.2f}ms]",
+            f"[{region_name} Δt={dt_ms_display:.2f}ms "
+            f"gate={max_dist_px / px_per_mm:.2f}mm]",
             flush=True,
         )
 
@@ -479,11 +362,13 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
         )
         all_detections.extend(detections)
 
+        # max_dist_px se pasa frame a frame → tracker usa el gate correcto
         tracker.step(
             detections          = detections,
             frame_idx_original  = fi_orig,
             image_name          = img_path.name,
             dt_s                = dt_s,
+            max_dist_px         = max_dist_px,
             timestamp_s         = timestamp_s,
             region_name         = region_name,
             region_idx          = region_idx,
@@ -498,20 +383,17 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     tracks_filtered = [tr for tr in tracks_all
                        if len(tr.history) >= run_cfg.min_frames_keep]
 
-    print(f"[PTV] Tracks totales: {len(tracks_all)} | filtrados (≥{run_cfg.min_frames_keep} frames): {len(tracks_filtered)}", flush=True)
+    print(
+        f"[PTV] Tracks totales: {len(tracks_all)} | "
+        f"filtrados (≥{run_cfg.min_frames_keep} frames): {len(tracks_filtered)}",
+        flush=True,
+    )
 
     # ── Exportación ───────────────────────────────────────────────
     export_detections_csv(all_detections, run_cfg.out_dir / "detections.csv")
-
-    export_tracks_csv(
-        tracks_filtered,
-        fps=fps,
-        path=run_cfg.out_dir / "tracks.csv",
-    )
-
+    export_tracks_csv(tracks_filtered, fps=fps, path=run_cfg.out_dir / "tracks.csv")
     export_tracks_json(
-        tracks_filtered,
-        fps=fps,
+        tracks_filtered, fps=fps,
         temporal_regions=run_cfg.temporal_regions,
         path=run_cfg.out_dir / "tracks.json",
     )
@@ -520,17 +402,17 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     schedule_summary = []
     if run_cfg.temporal_regions:
         for r in run_cfg.temporal_regions:
-            skip = r["skip_frames"]
-            n_in_region = sum(
-                1 for e in schedule if e["region_name"] == r["name"]
-            )
+            skip       = r["skip_frames"]
+            gate_mm    = r.get("max_dist_mm")
+            n_in_region = sum(1 for e in schedule if e["region_name"] == r["name"])
             schedule_summary.append({
-                "region":       r["name"],
-                "start_time_s": r["start_time"],
-                "end_time_s":   r["end_time"],
-                "skip_frames":  skip,
-                "dt_ms":        (skip + 1) / fps * 1000,
-                "n_frames":     n_in_region,
+                "region":        r["name"],
+                "start_time_s":  r["start_time"],
+                "end_time_s":    r["end_time"],
+                "skip_frames":   skip,
+                "dt_ms":         (skip + 1) / fps * 1000,
+                "max_dist_mm":   gate_mm,
+                "n_frames":      n_in_region,
             })
 
     summary = {
@@ -561,25 +443,25 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     print(f"[PTV] summary.json   → {run_cfg.out_dir / 'summary.json'}", flush=True)
 
     # ── Visualizador HTML ─────────────────────────────────────────
-    #if run_cfg.save_images and frames_buffer:
-    #    ann_dir = run_cfg.out_dir / "annotations"
-    #    ensure_dir(ann_dir)
-    #    _save_annotated_frames_px(
-    #        frames_buffer, dets_buffer, schedule,
-    #        tracks_filtered, ann_dir,
-    #        px_per_mm=run_cfg.px_per_mm,
-    #        tail_length=run_cfg.viz_tail_length,
-    #    )
-    #    ann_images = list(ann_dir.glob("*.png"))
-    #    if ann_images:
-    #        create_interactive_visualizer(
-    #            ann_dir   = ann_dir,
-    #            tracks    = tracks_filtered,
-    #            out_path  = run_cfg.out_dir / "visualizer.html",
-    #            width_px  = run_cfg.width_px,
-    #            height_px = run_cfg.height_px,
-    #            fps       = fps,
-    #        )
-    #        print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
+    if run_cfg.save_images and frames_buffer:
+        ann_dir = run_cfg.out_dir / "annotations"
+        ensure_dir(ann_dir)
+        _save_annotated_frames_px(
+            frames_buffer, dets_buffer, schedule,
+            tracks_filtered, ann_dir,
+            px_per_mm=px_per_mm,
+            tail_length=run_cfg.viz_tail_length,
+        )
+        ann_images = list(ann_dir.glob("*.png"))
+        if ann_images:
+            create_interactive_visualizer(
+                ann_dir   = ann_dir,
+                tracks    = tracks_filtered,
+                out_path  = run_cfg.out_dir / "visualizer.html",
+                width_px  = run_cfg.width_px,
+                height_px = run_cfg.height_px,
+                fps       = fps,
+            )
+            print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
 
     print("[PTV] Completado.", flush=True)

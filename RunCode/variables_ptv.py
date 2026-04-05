@@ -13,8 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PTV_BASE_DIR        = PROJECT_ROOT / "PTV" / "Tomas"
 RESULTS_PTV_ROOT    = PROJECT_ROOT / "ResultadosPTV"
 RUNS_SEGMENT_DIR    = PROJECT_ROOT / "runs" / "segment"
-PTV_PREPROCESSED    = PROJECT_ROOT / "PTVPreprocesadas"   # imágenes preprocesadas (se borran al final)
-PTV_MASKS_ROOT      = PROJECT_ROOT / "PTVMascaras"        # máscaras dinámicas PTV  (se borran al final)
+PTV_PREPROCESSED    = PROJECT_ROOT / "PTVPreprocesadas"
+PTV_MASKS_ROOT      = PROJECT_ROOT / "PTVMascaras"
 PTV_MODELS_DIR      = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models"
 
 # ---------- FILTRO PARA SELECCIONAR CARPETAS ----------
@@ -80,7 +80,6 @@ CAM_PREPROCESS_PARAMS_PTV = {
 }
 
 # ---------- MÁSCARAS DINÁMICAS PTV ----------
-# Modelo: PTV_MODELS_DIR / f"cam{cam}-ptv-yolo26.pt"
 MASK_CONF_PTV    = 0.25
 MASK_DEVICE_PTV  = "0"
 INVERT_MASK_PTV  = True
@@ -90,12 +89,17 @@ def ptv_mask_model_path(cam: int) -> Path:
 
 # ---------- MODELO YOLO TRACKING ----------
 YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
-DEVICE_PTV = 0   # 0 = cuda:0 | "cpu" = sin GPU
+DEVICE_PTV = 0
 
 # ---------- REGIONES TEMPORALES PTV ----------
-# Estructura de un bloque: img_i  →  [skip frames]  →  img_{i+skip+1}
-# El tracker recibe frames espaciados con dt = (skip + 1) / fps
-# Cuando cambia de región, el ABG ajusta el dt automáticamente.
+# Estructura de un bloque: img_i → [skip frames] → img_{i+skip+1}
+# dt efectivo = (skip_frames + 1) / fps
+#
+# max_dist_mm por región:
+#   - Controla el gate espacial del tracker para esa región.
+#   - None → usa el valor global de CAM_TRACKING_PARAMS[cam]["max_dist_mm"].
+#   - Regla de dedo: max_dist_mm ≈ velocidad_max_esperada (mm/s) × dt_s × factor_seguridad
+#     Ejemplo: flujo a 5 mm/s con dt=9/220 s ≈ 41 ms → despl. máx ≈ 0.2 mm → 0.5 mm con margen.
 
 @dataclass
 class PTVTemporalRegion:
@@ -107,12 +111,19 @@ class PTVTemporalRegion:
 
     La secuencia que ve el tracker dentro de una región es:
         img[start], img[start + (skip+1)], img[start + 2*(skip+1)], ...
+
+    max_dist_mm:
+        Gate espacial del tracker para esta región, en mm.
+        None = usar valor global de CAM_TRACKING_PARAMS.
+        Especificar explícitamente cuando el desplazamiento entre frames observados
+        difiere mucho del de la región de referencia (alta_velocidad con skip=0).
     """
     name: str
     start_time: float           # segundos desde inicio de captura
     end_time: Optional[float]   # None = hasta el final
     skip_frames: int            # frames a saltar entre observaciones consecutivas
     fps: float
+    max_dist_mm: Optional[float] = None   # gate espacial específico; None = global
     _total_frames_available: Optional[int] = field(default=None, repr=False)
 
     def __post_init__(self):
@@ -127,6 +138,11 @@ class PTVTemporalRegion:
             )
         if self.start_time < 0:
             raise ValueError(f"start_time no puede ser negativo en región '{self.name}'")
+        if self.max_dist_mm is not None and self.max_dist_mm <= 0:
+            raise ValueError(
+                f"max_dist_mm debe ser > 0 en región '{self.name}', "
+                f"recibido: {self.max_dist_mm}"
+            )
 
     @property
     def start_frame(self) -> int:
@@ -184,6 +200,7 @@ class PTVTemporalRegion:
             "stride":       self.stride,
             "dt_ms":        self.dt_ms,
             "n_selected":   self.n_selected_frames,
+            "max_dist_mm":  self.max_dist_mm,   # None si usa valor global
         }
 
     @classmethod
@@ -194,65 +211,73 @@ class PTVTemporalRegion:
             end_time=d["end_time"],
             skip_frames=d["skip_frames"],
             fps=d["fps"],
+            max_dist_mm=d.get("max_dist_mm"),   # None si no está en el JSON
         )
 
     def __repr__(self) -> str:
-        end_str = f"{self.end_time:.1f}s" if self.end_time is not None else "END"
+        end_str  = f"{self.end_time:.1f}s" if self.end_time is not None else "END"
+        gate_str = f"{self.max_dist_mm}mm" if self.max_dist_mm is not None else "global"
         return (
             f"PTVTemporalRegion('{self.name}', "
             f"t={self.start_time:.1f}-{end_str}, "
-            f"skip={self.skip_frames}, Δt={self.dt_ms:.2f}ms)"
+            f"skip={self.skip_frames}, Δt={self.dt_ms:.2f}ms, gate={gate_str})"
         )
 
 
 # ---------- REGIONES TEMPORALES CARBOPOL 02 ----------
+# Criterio de max_dist_mm:
+#   - alta_velocidad  (skip=0, dt≈4.5ms)  : flujo rápido, pero dt pequeño → 2.0 mm
+#   - media_velocidad (skip=2, dt≈13.6ms) : flujo moderado → 3.0 mm
+#   - baja_velocidad  (skip=8, dt≈40.9ms) : flujo lento, dt grande → 1.5 mm
+#                     (en baja vel. la fibra se mueve poco aunque dt sea grande)
 TEMPORAL_REGIONS_PTV_CAR02 = {
     1: [
-        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=6.5,  skip_frames=0,  fps=220.0),
-        PTVTemporalRegion(name="media_velocidad", start_time=6.5,  end_time=10.0, skip_frames=2,  fps=220.0),
-        PTVTemporalRegion(name="baja_velocidad",  start_time=10.0, end_time=20.0, skip_frames=8,  fps=220.0),
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=3.0,  skip_frames=2, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=3.0,  end_time=6.0,  skip_frames=4, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=4.0),
     ],
     2: [
-        PTVTemporalRegion(name="alta_velocidad",      start_time=0.0,  end_time=1.5,  skip_frames=0,  fps=220.0),
-        PTVTemporalRegion(name="media_velocidad",     start_time=1.5,  end_time=3.0,  skip_frames=2,  fps=220.0),
-        PTVTemporalRegion(name="baja_velocidad",      start_time=3.0,  end_time=6.0,  skip_frames=4,  fps=220.0),
-        PTVTemporalRegion(name="muy_baja_velocidad",  start_time=6.0,  end_time=20.0, skip_frames=10,  fps=220.0),
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=3.0,  skip_frames=2, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=3.0,  end_time=6.0,  skip_frames=4, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=4.0),
     ],
     3: [
-        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=2.0,  skip_frames=0,  fps=220.0),
-        PTVTemporalRegion(name="media_velocidad",    start_time=2.0,  end_time=5.0,  skip_frames=2,  fps=220.0),
-        PTVTemporalRegion(name="baja_velocidad",     start_time=5.0,  end_time=7.0,  skip_frames=4,  fps=220.0),
-        PTVTemporalRegion(name="muy_baja_velocidad", start_time=7.0,  end_time=20.0, skip_frames=8,  fps=220.0),
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=2.0,  skip_frames=0, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=2.0,  end_time=5.0,  skip_frames=2, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=5.0,  end_time=7.0,  skip_frames=4, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=7.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=1.5),
     ],
     4: [
-        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=4.5,  skip_frames=0,  fps=660.0),
-        PTVTemporalRegion(name="media_velocidad", start_time=4.5,  end_time=8.0,  skip_frames=2,  fps=660.0),
-        PTVTemporalRegion(name="baja_velocidad",  start_time=8.0,  end_time=20.0, skip_frames=8,  fps=660.0),
+        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=4.5,  skip_frames=0, fps=660.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="media_velocidad", start_time=4.5,  end_time=8.0,  skip_frames=2, fps=660.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="baja_velocidad",  start_time=8.0,  end_time=20.0, skip_frames=8, fps=660.0, max_dist_mm=1.5),
     ],
 }
 
 # ---------- REGIONES TEMPORALES CARBOPOL 05 ----------
 TEMPORAL_REGIONS_PTV_CAR05 = {
     1: [
-        PTVTemporalRegion(name="alta_velocidad",          start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0),
-        PTVTemporalRegion(name="media_velocidad",         start_time=0.2,  end_time=5.0,  skip_frames=1,  fps=220.0),
-        PTVTemporalRegion(name="baja_velocidad",          start_time=5.0,  end_time=8.0,  skip_frames=2,  fps=220.0),
-        PTVTemporalRegion(name="muy_baja_velocidad",      start_time=8.0,  end_time=15.0, skip_frames=4,  fps=220.0),
-        PTVTemporalRegion(name="extrema_baja_velocidad",  start_time=15.0, end_time=40.0, skip_frames=8,  fps=220.0),
+        PTVTemporalRegion(name="alta_velocidad",         start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=5.0,  skip_frames=1,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="baja_velocidad",         start_time=5.0,  end_time=8.0,  skip_frames=2,  fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="muy_baja_velocidad",     start_time=8.0,  end_time=15.0, skip_frames=4,  fps=220.0, max_dist_mm=1.5),
+        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=8,  fps=220.0, max_dist_mm=1.0),
     ],
     2: [
-        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=15.0, skip_frames=8,  fps=220.0),
-        PTVTemporalRegion(name="media_velocidad", start_time=15.0, end_time=40.0, skip_frames=16, fps=220.0),
+        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=15.0, skip_frames=8,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="media_velocidad", start_time=15.0, end_time=40.0, skip_frames=16, fps=220.0, max_dist_mm=1.5),
     ],
     3: [
-        PTVTemporalRegion(name="sin_datos",      start_time=0.0,  end_time=8.0,  skip_frames=0,  fps=220.0),
-        PTVTemporalRegion(name="alta_velocidad", start_time=8.0,  end_time=40.0, skip_frames=16, fps=220.0),
+        PTVTemporalRegion(name="sin_datos",      start_time=0.0,  end_time=8.0,  skip_frames=0,  fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="alta_velocidad", start_time=8.0,  end_time=40.0, skip_frames=16, fps=220.0, max_dist_mm=2.0),
     ],
     4: [
-        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0,  fps=660.0),
-        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=7.5,  skip_frames=2,  fps=660.0),
-        PTVTemporalRegion(name="baja_velocidad",     start_time=7.5,  end_time=20.0, skip_frames=4,  fps=660.0),
-        PTVTemporalRegion(name="muy_baja_velocidad", start_time=20.0, end_time=40.0, skip_frames=8,  fps=660.0),
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=660.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=7.5,  skip_frames=2, fps=660.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=7.5,  end_time=20.0, skip_frames=4, fps=660.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=20.0, end_time=40.0, skip_frames=8, fps=660.0, max_dist_mm=1.5),
     ],
 }
 
@@ -275,7 +300,7 @@ GAMMA           = 0.05
 CONF_TRACK      = 0.1
 MIN_FRAMES_KEEP = 5
 ANNOTATE        = True
-MAX_MISSES      = 2 #Cuantos frames puede faltar una partícula antes de eliminar el track
+MAX_MISSES      = 2
 
 SAVE_IMAGES = True
 
@@ -288,6 +313,7 @@ FIBER_WIDTH_MM  = 0.2
 
 FEAT_WEIGHTS = (1.0, 1.0, 0.3, 2.0, 2.0)
 
+# max_dist_mm global: fallback cuando la región no especifica max_dist_mm.
 CAM_TRACKING_PARAMS = {
     1: dict(sim_threshold=0.99, max_dist_mm=2.0),
     2: dict(sim_threshold=0.99, max_dist_mm=2.0),
@@ -305,7 +331,7 @@ VIZ_UPDATE_EVERY = 1
 
 DELETE_PREDICT_FOLDERS = False
 
-USE_TEMPORAL_REGIONS_PTV = True  # True = regiones adaptativas, False = sin skip
+USE_TEMPORAL_REGIONS_PTV = True
 
 
 # ─────────────────────────────────────────────
@@ -322,6 +348,23 @@ def get_l_ref_px(cam: int, cam_profiles: dict) -> float:
 
 
 def get_max_dist_px(cam: int, cam_profiles: dict) -> float:
+    """Gate global (fallback). Usar get_max_dist_px_for_region cuando hay regiones."""
     px_per_mm   = cam_profiles.get(cam, {}).get("px_per_mm", 7.8)
     max_dist_mm = get_tracking_params(cam)["max_dist_mm"]
     return max_dist_mm * px_per_mm
+
+
+def get_max_dist_px_for_region(
+    region_max_dist_mm: Optional[float],
+    cam: int,
+    cam_profiles: dict,
+) -> float:
+    """
+    Retorna max_dist_px efectivo para una región.
+    Si la región define max_dist_mm, lo convierte a px.
+    Si no (None), usa el valor global de CAM_TRACKING_PARAMS.
+    """
+    px_per_mm = cam_profiles.get(cam, {}).get("px_per_mm", 7.8)
+    if region_max_dist_mm is not None:
+        return region_max_dist_mm * px_per_mm
+    return get_tracking_params(cam)["max_dist_mm"] * px_per_mm

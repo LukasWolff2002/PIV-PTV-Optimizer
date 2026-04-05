@@ -4,10 +4,12 @@ tracker.py
 Tracker multi-objeto con Similarity Search Scheme vectorizado.
 
 Cambios respecto a la versión anterior:
-- step() recibe dt_s explícito (Δt real de la observación) → soporta timestep variable
-- step() recibe region_name, region_idx y frame_idx_original para trazabilidad
-- TrackRecord se guarda en mm (requiere px_per_mm en config)
-- Las máscaras dinámicas por frame se leen desde masks_dir (ya generadas en preproceso)
+- step() recibe max_dist_px explícito por frame (definido por región temporal).
+  Cada región define su propio gate espacial en variables_ptv.py.
+  Si la región no especifica max_dist_mm, runner.py pasa el valor global.
+- step() recibe dt_s explícito → soporta timestep variable entre regiones.
+- TrackRecord se guarda en mm (requiere px_per_mm en config).
+- Máscaras dinámicas por frame leídas desde masks_dir (generadas en preproceso).
 """
 from __future__ import annotations
 
@@ -33,10 +35,7 @@ def _natural_key(s: str) -> list:
 
 
 def _build_mask_map(masks_dir: Path) -> dict[str, Path]:
-    """
-    Construye mapa stem → path para máscaras ya generadas.
-    Mismo formato que el PIV: frame_0001_mask.tiff
-    """
+    """Construye mapa stem → path para máscaras ya generadas."""
     out: dict[str, Path] = {}
     for p in masks_dir.glob("*.tif*"):
         stem = p.stem
@@ -52,10 +51,7 @@ def _load_mask_for_image(
     img_name: str,
     threshold: float,
 ) -> Optional[np.ndarray]:
-    """
-    Carga máscara dinámica para una imagen. Retorna bool array (H,W) o None.
-    True = píxel enmascarado (a ignorar).
-    """
+    """Carga máscara dinámica para una imagen. True = píxel enmascarado."""
     stem = Path(img_name).stem
     mask_path = mask_map.get(stem)
     if mask_path is None:
@@ -100,8 +96,10 @@ def _build_feature_matrix(items, get_cx, get_cy, get_angle, get_length,
         return np.zeros((0, 5), dtype=np.float64)
     F = np.zeros((n, 5), dtype=np.float64)
     for i, item in enumerate(items):
-        v = _fiber_feature_vector(get_cx(item), get_cy(item), get_angle(item),
-                                   get_length(item), width_px, height_px, l_ref, weights)
+        v = _fiber_feature_vector(
+            get_cx(item), get_cy(item), get_angle(item), get_length(item),
+            width_px, height_px, l_ref, weights,
+        )
         norm = np.linalg.norm(v)
         F[i] = v / norm if norm > 1e-9 else v
     return F
@@ -115,11 +113,9 @@ class Tracker:
     """
     Tracker multi-objeto con Similarity Search Scheme y filtro ABG.
 
-    Novedades:
-    - step() recibe dt_s explícito para soportar timestep variable entre regiones.
-    - Aplica máscaras dinámicas (ya cargadas) para invalidar detecciones
-      cuyos centroides caen en zona enmascarada.
-    - Guarda posición/velocidad en mm en TrackRecord.
+    El gate espacial (max_dist_px) se recibe en cada step() desde el runner,
+    que lo calcula a partir del max_dist_mm definido por región temporal.
+    Esto permite gates distintos por región sin reinicializar el tracker.
     """
 
     def __init__(self, cfg: TrackingConfig):
@@ -129,7 +125,8 @@ class Tracker:
         self.next_track_id = 1
 
         self.sim_threshold: float = getattr(cfg, "sim_threshold", 0.85)
-        self.max_dist_px: float   = getattr(cfg, "max_dist_px", 80.0)
+        # max_dist_px de cfg se usa solo como fallback si step() no lo recibe
+        self._default_max_dist_px: float = getattr(cfg, "max_dist_px", 80.0)
         self.feat_weights: tuple  = getattr(cfg, "feat_weights", (1.0, 1.0, 0.5, 1.5, 1.5))
         self.l_ref_px: float      = getattr(cfg, "l_ref_px", 13.0 * 7.8)
         self.px_per_mm: float     = cfg.px_per_mm
@@ -139,11 +136,15 @@ class Tracker:
         self._mask_map: dict[str, Path] = {}
         if cfg.apply_dynamic_mask and cfg.masks_dir and cfg.masks_dir.exists():
             self._mask_map = _build_mask_map(cfg.masks_dir)
-            print(f"[TRACKER] Máscaras dinámicas: {len(self._mask_map)} archivos en {cfg.masks_dir}", flush=True)
+            print(
+                f"[TRACKER] Máscaras dinámicas: {len(self._mask_map)} archivos "
+                f"en {cfg.masks_dir}",
+                flush=True,
+            )
         else:
             print("[TRACKER] Sin máscaras dinámicas.", flush=True)
 
-        # Máscara fija (estática) — se carga una vez
+        # Máscara fija (estática)
         self._static_mask: Optional[np.ndarray] = None
         if cfg.apply_static_mask and cfg.fixed_mask_path and cfg.fixed_mask_path.exists():
             self._static_mask = self._load_static_mask(cfg.fixed_mask_path)
@@ -164,7 +165,7 @@ class Tracker:
             return None
 
     def _get_mask_for_frame(self, img_name: str) -> Optional[np.ndarray]:
-        """Retorna máscara combinada (dinámica | estática) para un frame. True=enmascarado."""
+        """Retorna máscara combinada (dinámica | estática). True = enmascarado."""
         dyn = None
         if self._mask_map:
             dyn = _load_mask_for_image(self._mask_map, img_name, self.mask_threshold)
@@ -175,14 +176,14 @@ class Tracker:
             return self._static_mask
         if self._static_mask is None:
             return dyn
-        return dyn | self._static_mask  # unión
+        return dyn | self._static_mask
 
     def _det_in_mask(self, det: Detection, mask: Optional[np.ndarray]) -> bool:
-        """Retorna True si el centroide de la detección cae en zona enmascarada."""
+        """True si el centroide de la detección cae en zona enmascarada."""
         if mask is None:
             return False
         cx, cy = int(round(det.cx)), int(round(det.cy))
-        h, w = mask.shape
+        h, w   = mask.shape
         cx = max(0, min(cx, w - 1))
         cy = max(0, min(cy, h - 1))
         return bool(mask[cy, cx])
@@ -217,27 +218,46 @@ class Tracker:
 
     # ── Asignación ────────────────────────────────────────────────
 
-    def _spatial_gate(self, tracks: list[Track], dets: list[Detection]) -> np.ndarray:
+    def _spatial_gate(
+        self,
+        tracks: list[Track],
+        dets: list[Detection],
+        max_dist_px: float,
+    ) -> np.ndarray:
+        """
+        Máscara booleana (T×N): True si dist(track_i, det_j) ≤ max_dist_px.
+        max_dist_px es el gate específico de la región actual.
+        """
         T, N = len(tracks), len(dets)
         if T == 0 or N == 0:
             return np.zeros((T, N), dtype=bool)
-        trk_xy = np.array([[tr.state.x, tr.state.y] for tr in tracks], dtype=np.float64)
-        det_xy = np.array([[d.cx, d.cy] for d in dets], dtype=np.float64)
-        diff = trk_xy[:, np.newaxis, :] - det_xy[np.newaxis, :, :]
-        dist = np.sqrt((diff ** 2).sum(axis=2))
-        return dist <= self.max_dist_px
 
-    def _assign(self, tracks: list[Track], dets: list[Detection]) -> list[tuple[int, int]]:
+        trk_xy = np.array([[tr.state.x, tr.state.y] for tr in tracks], dtype=np.float64)
+        det_xy  = np.array([[d.cx, d.cy] for d in dets],               dtype=np.float64)
+        diff    = trk_xy[:, np.newaxis, :] - det_xy[np.newaxis, :, :]
+        dist    = np.sqrt((diff ** 2).sum(axis=2))
+        return dist <= max_dist_px
+
+    def _assign(
+        self,
+        tracks: list[Track],
+        dets: list[Detection],
+        max_dist_px: float,
+    ) -> list[tuple[int, int]]:
+        """
+        Asigna tracks a detecciones con SSS (similitud coseno) y gate espacial.
+        max_dist_px es el gate de la región actual, pasado por step().
+        """
         T, N = len(tracks), len(dets)
         if T == 0 or N == 0:
             return []
 
         Q = self._track_feats(tracks)
         D = self._det_feats(dets)
-        S = Q @ D.T
+        S = Q @ D.T   # (T, N) similitud coseno
 
-        gate_mask = self._spatial_gate(tracks, dets)
-        S[~gate_mask] = -np.inf
+        gate_mask = self._spatial_gate(tracks, dets, max_dist_px)
+        S[~gate_mask]       = -np.inf
         S[S < self.sim_threshold] = -np.inf
 
         assigned_tracks: set[int] = set()
@@ -261,7 +281,7 @@ class Tracker:
 
         return assignments
 
-    # ── Nuevo track ───────────────────────────────────────────────
+    # ── Helpers de registro ───────────────────────────────────────
 
     def _make_record(
         self,
@@ -330,43 +350,51 @@ class Tracker:
     def step(
         self,
         detections: list[Detection],
-        frame_idx_original: int,   # índice en secuencia ORIGINAL de frames
+        frame_idx_original: int,
         image_name: str,
-        dt_s: float,               # Δt real de esta observación (variable por región)
-        timestamp_s: float,        # tiempo absoluto en segundos
+        dt_s: float,
+        max_dist_px: float,        # gate de la región actual (calculado en runner)
+        timestamp_s: float,
         region_name: str,
         region_idx: int,
     ) -> None:
         """
-        Procesa un frame del tracker con dt_s explícito.
+        Procesa un frame.
 
-        dt_s puede cambiar entre llamadas cuando cambia la región temporal —
-        el ABG lo usa directamente para predicción y corrección, por lo que
-        el estado evoluciona correctamente con cualquier timestep.
+        dt_s y max_dist_px pueden cambiar entre llamadas al cambiar de región.
+        El ABG usa dt_s directamente para predicción y corrección.
+        El gate espacial usa max_dist_px, definido por región en variables_ptv.py.
 
-        Las detecciones cuyos centroides caen en zona enmascarada se filtran
-        antes de la asignación.
+        Flujo:
+            0) Filtrar dets en zona enmascarada
+            1) Predicción ABG con dt_s actual
+            2) Asignación SSS con gate = max_dist_px
+            3) Corrección ABG + registro en mm
+            4) Tracks sin match → miss o terminar
+            5) Detecciones sin match → nuevo track
         """
-        # ── 0) Filtrar detecciones en zona enmascarada ───────────
+        # ── 0) Filtrar detecciones enmascaradas ──────────────────
         mask = self._get_mask_for_frame(image_name)
         valid_dets = [d for d in detections if not self._det_in_mask(d, mask)]
-        if len(valid_dets) < len(detections):
-            n_filtered = len(detections) - len(valid_dets)
-            print(f"[TRACKER] frame {frame_idx_original}: {n_filtered} det(s) en zona enmascarada → descartadas", flush=True)
+        n_filtered = len(detections) - len(valid_dets)
+        if n_filtered > 0:
+            print(
+                f"[TRACKER] frame {frame_idx_original}: "
+                f"{n_filtered} det(s) en zona enmascarada → descartadas",
+                flush=True,
+            )
 
-        # ── 1) Predicción ABG con dt_s actual ───────────────────
-        # dt_s puede ser distinto al del frame anterior si cambiamos de región.
-        # El ABG es lineal y acepta cualquier dt sin reinicialización.
+        # ── 1) Predicción ABG ────────────────────────────────────
         for tr in self.active_tracks:
             tr.state = predict_state_abg(tr.state, dt_s)
 
-        # ── 2) Asignación global SSS ─────────────────────────────
-        assignments = self._assign(self.active_tracks, valid_dets)
+        # ── 2) Asignación con gate de región ─────────────────────
+        assignments = self._assign(self.active_tracks, valid_dets, max_dist_px)
 
         assigned_tracks: set[int] = {ti for ti, _ in assignments}
         assigned_dets:   set[int] = {di for _, di in assignments}
 
-        # ── 3) Corrección ABG y registro en mm ───────────────────
+        # ── 3) Corrección ABG y registro ─────────────────────────
         for ti, di in assignments:
             tr  = self.active_tracks[ti]
             det = valid_dets[di]
