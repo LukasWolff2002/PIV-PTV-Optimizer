@@ -27,7 +27,7 @@ from .image_utils import (
     ensure_dir, read_image_any,
     normalize_to_uint8_for_yolo, np_to_builtin,
 )
-from .exporters import export_detections_csv, export_tracks_csv, export_tracks_json
+from .exporters import export_detections_csv, export_tracks_csv, export_tracks_json, export_schedule_csv
 from .visualizer import create_interactive_visualizer
 
 
@@ -398,6 +398,14 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
         path=run_cfg.out_dir / "tracks.json",
     )
 
+
+    export_schedule_csv(
+        schedule        = schedule,
+        tracks_filtered = tracks_filtered,
+        all_detections  = all_detections,
+        path            = run_cfg.out_dir / "schedule.csv",
+    )
+
     # ── Summary JSON ──────────────────────────────────────────────
     schedule_summary = []
     if run_cfg.temporal_regions:
@@ -443,25 +451,26 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     print(f"[PTV] summary.json   → {run_cfg.out_dir / 'summary.json'}", flush=True)
 
     # ── Visualizador HTML ─────────────────────────────────────────
-    if run_cfg.save_images and frames_buffer:
-        ann_dir = run_cfg.out_dir / "annotations"
-        ensure_dir(ann_dir)
-        _save_annotated_frames_px(
-            frames_buffer, dets_buffer, schedule,
-            tracks_filtered, ann_dir,
-            px_per_mm=px_per_mm,
-            tail_length=run_cfg.viz_tail_length,
-        )
-        ann_images = list(ann_dir.glob("*.png"))
-        if ann_images:
-            create_interactive_visualizer(
-                ann_dir   = ann_dir,
-                tracks    = tracks_filtered,
-                out_path  = run_cfg.out_dir / "visualizer.html",
-                width_px  = run_cfg.width_px,
-                height_px = run_cfg.height_px,
-                fps       = fps,
-            )
-            print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
+    #if run_cfg.save_images and frames_buffer:
+    #    ann_dir = run_cfg.out_dir / "annotations"
+    #    ensure_dir(ann_dir)
+    #    _save_annotated_frames_px(
+     #       frames_buffer, dets_buffer, schedule,
+    #        tracks_filtered, ann_dir,
+    #        px_per_mm=px_per_mm,
+    #        tail_length=run_cfg.viz_tail_length,
+     #   )
+    #    ann_images = list(ann_dir.glob("*.png"))
+    #    if ann_images:
+    #        create_interactive_visualizer(
+    #            ann_dir   = ann_dir,
+    #            tracks    = tracks_filtered,
+    #            out_path  = run_cfg.out_dir / "visualizer.html",
+    #            width_px  = run_cfg.width_px,
+    #            height_px = run_cfg.height_px,
+    #            fps       = fps,
+    #            px_per_mm = px_per_mm,   # ← agregar esta línea
+    #        )
+    #        print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
 
     print("[PTV] Completado.", flush=True)

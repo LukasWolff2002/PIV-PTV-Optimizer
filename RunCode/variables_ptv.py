@@ -91,46 +91,29 @@ def ptv_mask_model_path(cam: int) -> Path:
 YOLO_TRACK_MODEL = PROJECT_ROOT / "PTV" / "Codes" / "Segmentation-Models" / "best.pt"
 DEVICE_PTV = 0
 
+
 # ---------- REGIONES TEMPORALES PTV ----------
-# Estructura de un bloque: img_i → [skip frames] → img_{i+skip+1}
-# dt efectivo = (skip_frames + 1) / fps
-#
-# max_dist_mm por región:
-#   - Controla el gate espacial del tracker para esa región.
-#   - None → usa el valor global de CAM_TRACKING_PARAMS[cam]["max_dist_mm"].
-#   - Regla de dedo: max_dist_mm ≈ velocidad_max_esperada (mm/s) × dt_s × factor_seguridad
-#     Ejemplo: flujo a 5 mm/s con dt=9/220 s ≈ 41 ms → despl. máx ≈ 0.2 mm → 0.5 mm con margen.
 
 @dataclass
 class PTVTemporalRegion:
     """
     Define una región temporal para el muestreo adaptativo en PTV.
 
-    Un bloque PTV es: imagen_seleccionada + skip_frames → siguiente imagen seleccionada.
-    dt efectivo = (skip_frames + 1) / fps
-
-    La secuencia que ve el tracker dentro de una región es:
-        img[start], img[start + (skip+1)], img[start + 2*(skip+1)], ...
-
     max_dist_mm:
         Gate espacial del tracker para esta región, en mm.
         None = usar valor global de CAM_TRACKING_PARAMS.
-        Especificar explícitamente cuando el desplazamiento entre frames observados
-        difiere mucho del de la región de referencia (alta_velocidad con skip=0).
     """
     name: str
-    start_time: float           # segundos desde inicio de captura
-    end_time: Optional[float]   # None = hasta el final
-    skip_frames: int            # frames a saltar entre observaciones consecutivas
+    start_time: float
+    end_time: Optional[float]
+    skip_frames: int
     fps: float
-    max_dist_mm: Optional[float] = None   # gate espacial específico; None = global
+    max_dist_mm: Optional[float] = None
     _total_frames_available: Optional[int] = field(default=None, repr=False)
 
     def __post_init__(self):
         if self.skip_frames < 0:
-            raise ValueError(
-                f"skip_frames no puede ser negativo en región '{self.name}'"
-            )
+            raise ValueError(f"skip_frames no puede ser negativo en región '{self.name}'")
         if self.end_time is not None and self.start_time >= self.end_time:
             raise ValueError(
                 f"start_time ({self.start_time}) >= end_time ({self.end_time}) "
@@ -139,10 +122,7 @@ class PTVTemporalRegion:
         if self.start_time < 0:
             raise ValueError(f"start_time no puede ser negativo en región '{self.name}'")
         if self.max_dist_mm is not None and self.max_dist_mm <= 0:
-            raise ValueError(
-                f"max_dist_mm debe ser > 0 en región '{self.name}', "
-                f"recibido: {self.max_dist_mm}"
-            )
+            raise ValueError(f"max_dist_mm debe ser > 0 en región '{self.name}'")
 
     @property
     def start_frame(self) -> int:
@@ -168,7 +148,6 @@ class PTVTemporalRegion:
 
     @property
     def dt_s(self) -> float:
-        """Δt en segundos entre observaciones consecutivas del tracker."""
         return (self.skip_frames + 1) / self.fps
 
     @property
@@ -177,12 +156,10 @@ class PTVTemporalRegion:
 
     @property
     def stride(self) -> int:
-        """Paso en frames originales entre observaciones: skip + 1."""
         return self.skip_frames + 1
 
     @property
     def n_selected_frames(self) -> int:
-        """Número de frames que el tracker efectivamente verá en esta región."""
         if self.total_frames <= 0:
             return 0
         return max(0, (self.total_frames - 1) // self.stride + 1)
@@ -200,7 +177,7 @@ class PTVTemporalRegion:
             "stride":       self.stride,
             "dt_ms":        self.dt_ms,
             "n_selected":   self.n_selected_frames,
-            "max_dist_mm":  self.max_dist_mm,   # None si usa valor global
+            "max_dist_mm":  self.max_dist_mm,
         }
 
     @classmethod
@@ -211,7 +188,7 @@ class PTVTemporalRegion:
             end_time=d["end_time"],
             skip_frames=d["skip_frames"],
             fps=d["fps"],
-            max_dist_mm=d.get("max_dist_mm"),   # None si no está en el JSON
+            max_dist_mm=d.get("max_dist_mm"),
         )
 
     def __repr__(self) -> str:
@@ -225,11 +202,6 @@ class PTVTemporalRegion:
 
 
 # ---------- REGIONES TEMPORALES CARBOPOL 02 ----------
-# Criterio de max_dist_mm:
-#   - alta_velocidad  (skip=0, dt≈4.5ms)  : flujo rápido, pero dt pequeño → 2.0 mm
-#   - media_velocidad (skip=2, dt≈13.6ms) : flujo moderado → 3.0 mm
-#   - baja_velocidad  (skip=8, dt≈40.9ms) : flujo lento, dt grande → 1.5 mm
-#                     (en baja vel. la fibra se mueve poco aunque dt sea grande)
 TEMPORAL_REGIONS_PTV_CAR02 = {
     1: [
         PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=2.0),
@@ -283,7 +255,6 @@ TEMPORAL_REGIONS_PTV_CAR05 = {
 
 
 def get_ptv_temporal_regions(cam: int, carbopol: str) -> list[PTVTemporalRegion] | None:
-    """Retorna regiones temporales PTV para una cámara y carbopol."""
     carbopol_normalized = carbopol.zfill(2)
     if carbopol_normalized == "02":
         return TEMPORAL_REGIONS_PTV_CAR02.get(cam)
@@ -313,12 +284,11 @@ FIBER_WIDTH_MM  = 0.2
 
 FEAT_WEIGHTS = (1.0, 1.0, 0.3, 2.0, 2.0)
 
-# max_dist_mm global: fallback cuando la región no especifica max_dist_mm.
 CAM_TRACKING_PARAMS = {
-    1: dict(sim_threshold=0.99, max_dist_mm=2.0),
-    2: dict(sim_threshold=0.99, max_dist_mm=2.0),
-    3: dict(sim_threshold=0.99, max_dist_mm=2.0),
-    4: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    1: dict(sim_threshold=0.95, max_dist_mm=2.0),
+    2: dict(sim_threshold=0.95, max_dist_mm=2.0),
+    3: dict(sim_threshold=0.95, max_dist_mm=2.0),
+    4: dict(sim_threshold=0.95, max_dist_mm=2.0),
 }
 
 SAHI_SCALE_FACTOR  = 2
@@ -348,7 +318,6 @@ def get_l_ref_px(cam: int, cam_profiles: dict) -> float:
 
 
 def get_max_dist_px(cam: int, cam_profiles: dict) -> float:
-    """Gate global (fallback). Usar get_max_dist_px_for_region cuando hay regiones."""
     px_per_mm   = cam_profiles.get(cam, {}).get("px_per_mm", 7.8)
     max_dist_mm = get_tracking_params(cam)["max_dist_mm"]
     return max_dist_mm * px_per_mm
@@ -359,12 +328,46 @@ def get_max_dist_px_for_region(
     cam: int,
     cam_profiles: dict,
 ) -> float:
-    """
-    Retorna max_dist_px efectivo para una región.
-    Si la región define max_dist_mm, lo convierte a px.
-    Si no (None), usa el valor global de CAM_TRACKING_PARAMS.
-    """
     px_per_mm = cam_profiles.get(cam, {}).get("px_per_mm", 7.8)
     if region_max_dist_mm is not None:
         return region_max_dist_mm * px_per_mm
     return get_tracking_params(cam)["max_dist_mm"] * px_per_mm
+
+
+# ============================================================
+# PERFILES DE CÁMARA PTV
+# ============================================================
+# Fuente de verdad para configuración de cámara en el pipeline PTV.
+# Independiente de CAM_PROFILES_PIV — cada pipeline controla sus propias máscaras.
+#
+# apply_dynamic_mask: usar YOLO (camX-ptv-yolo26.pt) para generar máscara por frame
+# apply_static_mask : usar máscara fija (FixMasks/cam-X.tiff)
+#
+# Convención de máscaras: blanco=ignorar, negro=analizar
+
+CAM_PROFILES_PTV = {
+    1: dict(
+        fps=220, dt_ms=1000*(1/220), px_per_mm=8,
+        width_px=1024, height_px=1024,
+        apply_dynamic_mask=False,
+        apply_static_mask=True,
+    ),
+    2: dict(
+        fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,
+        width_px=1024, height_px=1024,
+        apply_dynamic_mask=False,
+        apply_static_mask=True,
+    ),
+    3: dict(
+        fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,
+        width_px=1024, height_px=1024,
+        apply_dynamic_mask=True,
+        apply_static_mask=True,
+    ),
+    4: dict(
+        fps=660, dt_ms=1000*(1/660), px_per_mm=10.7,
+        width_px=384, height_px=384,
+        apply_dynamic_mask=True,
+        apply_static_mask=True,
+    ),
+}

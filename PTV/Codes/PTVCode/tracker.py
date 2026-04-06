@@ -3,13 +3,18 @@ tracker.py
 ==========
 Tracker multi-objeto con Similarity Search Scheme vectorizado.
 
+Convención de máscaras:
+  blanco (valor alto) = zona a IGNORAR (no analizar)
+  negro  (valor bajo) = zona a ANALIZAR
+
 Cambios respecto a la versión anterior:
-- step() recibe max_dist_px explícito por frame (definido por región temporal).
-  Cada región define su propio gate espacial en variables_ptv.py.
-  Si la región no especifica max_dist_mm, runner.py pasa el valor global.
+- _load_static_mask: eliminado ImageOps.invert que invertía la convención.
+  Ahora blanco=ignorar se respeta directamente sin transformación.
+- _load_mask_for_image: threshold adaptativo según rango real del archivo
+  (funciona con uint8, uint16 y float [0,1] sin configuración adicional).
+- step() recibe max_dist_px explícito por frame (gate por región temporal).
 - step() recibe dt_s explícito → soporta timestep variable entre regiones.
 - TrackRecord se guarda en mm (requiere px_per_mm en config).
-- Máscaras dinámicas por frame leídas desde masks_dir (generadas en preproceso).
 """
 from __future__ import annotations
 
@@ -27,7 +32,28 @@ from .filters import predict_state_abg, update_state_abg
 
 
 # ─────────────────────────────────────────────
-# CARGA DE MÁSCARA DINÁMICA POR FRAME
+# THRESHOLD ADAPTATIVO
+# ─────────────────────────────────────────────
+
+def _auto_threshold(m: np.ndarray) -> float:
+    """
+    Threshold al 50% del rango máximo del array.
+    Funciona con cualquier tipo de máscara binaria:
+      float [0, 1]      → 0.5
+      uint8 [0, 255]    → 127.0
+      uint16 [0, 65535] → 32767.0
+    """
+    vmax = float(m.max())
+    if vmax <= 1.0:
+        return 0.5
+    elif vmax <= 255.0:
+        return 127.0
+    else:
+        return 32767.0
+
+
+# ─────────────────────────────────────────────
+# CARGA DE MÁSCARAS
 # ─────────────────────────────────────────────
 
 def _natural_key(s: str) -> list:
@@ -49,19 +75,27 @@ def _build_mask_map(masks_dir: Path) -> dict[str, Path]:
 def _load_mask_for_image(
     mask_map: dict[str, Path],
     img_name: str,
-    threshold: float,
 ) -> Optional[np.ndarray]:
-    """Carga máscara dinámica para una imagen. True = píxel enmascarado."""
+    """
+    Carga máscara dinámica para una imagen.
+    Retorna bool array (H, W) o None.
+
+    Convención: True = enmascarado (ignorar).
+      blanco (valor alto) → True  → descartar detección
+      negro  (valor bajo) → False → conservar detección
+
+    Threshold adaptativo: funciona con uint8, uint16 y float [0,1].
+    """
     stem = Path(img_name).stem
     mask_path = mask_map.get(stem)
     if mask_path is None:
         return None
     try:
         import tifffile
-        m = tifffile.imread(mask_path).astype(np.float32)
+        m = tifffile.imread(str(mask_path)).astype(np.float32)
         if m.ndim == 3:
             m = m[..., 0]
-        return m > threshold
+        return m > _auto_threshold(m)
     except Exception as e:
         print(f"[WARN] No se pudo cargar máscara {mask_path}: {e}", flush=True)
         return None
@@ -113,9 +147,12 @@ class Tracker:
     """
     Tracker multi-objeto con Similarity Search Scheme y filtro ABG.
 
+    Convención de máscaras:
+      blanco (valor alto) = ignorar  → True  → detección descartada
+      negro  (valor bajo) = analizar → False → detección conservada
+
     El gate espacial (max_dist_px) se recibe en cada step() desde el runner,
-    que lo calcula a partir del max_dist_mm definido por región temporal.
-    Esto permite gates distintos por región sin reinicializar el tracker.
+    calculado a partir del max_dist_mm definido por región temporal en variables_ptv.py.
     """
 
     def __init__(self, cfg: TrackingConfig):
@@ -124,13 +161,11 @@ class Tracker:
         self.finished_tracks: list[Track] = []
         self.next_track_id = 1
 
-        self.sim_threshold: float = getattr(cfg, "sim_threshold", 0.85)
-        # max_dist_px de cfg se usa solo como fallback si step() no lo recibe
+        self.sim_threshold: float    = getattr(cfg, "sim_threshold", 0.85)
         self._default_max_dist_px: float = getattr(cfg, "max_dist_px", 80.0)
-        self.feat_weights: tuple  = getattr(cfg, "feat_weights", (1.0, 1.0, 0.5, 1.5, 1.5))
-        self.l_ref_px: float      = getattr(cfg, "l_ref_px", 13.0 * 7.8)
-        self.px_per_mm: float     = cfg.px_per_mm
-        self.mask_threshold: float = getattr(cfg, "mask_threshold", 127.0)
+        self.feat_weights: tuple     = getattr(cfg, "feat_weights", (1.0, 1.0, 0.5, 1.5, 1.5))
+        self.l_ref_px: float         = getattr(cfg, "l_ref_px", 13.0 * 7.8)
+        self.px_per_mm: float        = cfg.px_per_mm
 
         # Mapa de máscaras dinámicas (precargado una vez)
         self._mask_map: dict[str, Path] = {}
@@ -144,31 +179,59 @@ class Tracker:
         else:
             print("[TRACKER] Sin máscaras dinámicas.", flush=True)
 
-        # Máscara fija (estática)
+        # Máscara fija (estática) — se carga una vez
         self._static_mask: Optional[np.ndarray] = None
         if cfg.apply_static_mask and cfg.fixed_mask_path and cfg.fixed_mask_path.exists():
             self._static_mask = self._load_static_mask(cfg.fixed_mask_path)
-            print(f"[TRACKER] Máscara fija cargada: {cfg.fixed_mask_path}", flush=True)
+            if self._static_mask is not None:
+                n_ignore = int(self._static_mask.sum())
+                n_total  = self._static_mask.size
+                print(
+                    f"[TRACKER] Máscara fija: {n_ignore}/{n_total} px ignorados "
+                    f"({100 * n_ignore / n_total:.1f}%)",
+                    flush=True,
+                )
+        else:
+            print("[TRACKER] Sin máscara fija.", flush=True)
 
     def _load_static_mask(self, path: Path) -> Optional[np.ndarray]:
-        """Carga máscara fija. True = enmascarado. Convención: negro(0)=válido."""
+        """
+        Carga máscara fija. Retorna bool array (H, W) o None.
+
+        Convención: True = enmascarado (ignorar).
+          blanco (valor alto) → True  → ignorar
+          negro  (valor bajo) → False → analizar
+
+        Threshold adaptativo: funciona con uint8, uint16 y float [0,1].
+        NO invierte la imagen — la convención blanco=ignorar se aplica directamente.
+        """
         try:
             import tifffile
-            from PIL import Image, ImageOps
-            with Image.open(path) as im:
-                im.load()
-                im = ImageOps.invert(im.convert("L"))
-            arr = np.array(im, dtype=np.uint8)
-            return arr > 127
+            raw = tifffile.imread(str(path))
+            m   = raw.astype(np.float32)
+            if m.ndim == 3:
+                m = m[..., 0]
+            thr  = _auto_threshold(m)
+            vmin = float(m.min())
+            vmax = float(m.max())
+            print(
+                f"[TRACKER] Máscara fija: dtype={raw.dtype} "
+                f"rango=[{vmin:.1f}, {vmax:.1f}] → threshold={thr:.1f}",
+                flush=True,
+            )
+            return m > thr
         except Exception as e:
             print(f"[WARN] No se pudo cargar máscara fija {path}: {e}", flush=True)
             return None
 
     def _get_mask_for_frame(self, img_name: str) -> Optional[np.ndarray]:
-        """Retorna máscara combinada (dinámica | estática). True = enmascarado."""
+        """
+        Retorna máscara combinada (dinámica | estática).
+        True = enmascarado (ignorar).
+        """
         dyn = None
         if self._mask_map:
-            dyn = _load_mask_for_image(self._mask_map, img_name, self.mask_threshold)
+            dyn = _load_mask_for_image(self._mask_map, img_name)
 
         if dyn is None and self._static_mask is None:
             return None
@@ -182,10 +245,8 @@ class Tracker:
         """True si el centroide de la detección cae en zona enmascarada."""
         if mask is None:
             return False
-        cx, cy = int(round(det.cx)), int(round(det.cy))
-        h, w   = mask.shape
-        cx = max(0, min(cx, w - 1))
-        cy = max(0, min(cy, h - 1))
+        cx = max(0, min(int(round(det.cx)), mask.shape[1] - 1))
+        cy = max(0, min(int(round(det.cy)), mask.shape[0] - 1))
         return bool(mask[cy, cx])
 
     # ── Feature matrices ──────────────────────────────────────────
@@ -224,14 +285,10 @@ class Tracker:
         dets: list[Detection],
         max_dist_px: float,
     ) -> np.ndarray:
-        """
-        Máscara booleana (T×N): True si dist(track_i, det_j) ≤ max_dist_px.
-        max_dist_px es el gate específico de la región actual.
-        """
+        """Máscara booleana (T×N): True si dist ≤ max_dist_px."""
         T, N = len(tracks), len(dets)
         if T == 0 or N == 0:
             return np.zeros((T, N), dtype=bool)
-
         trk_xy = np.array([[tr.state.x, tr.state.y] for tr in tracks], dtype=np.float64)
         det_xy  = np.array([[d.cx, d.cy] for d in dets],               dtype=np.float64)
         diff    = trk_xy[:, np.newaxis, :] - det_xy[np.newaxis, :, :]
@@ -244,25 +301,18 @@ class Tracker:
         dets: list[Detection],
         max_dist_px: float,
     ) -> list[tuple[int, int]]:
-        """
-        Asigna tracks a detecciones con SSS (similitud coseno) y gate espacial.
-        max_dist_px es el gate de la región actual, pasado por step().
-        """
+        """Asignación SSS con gate espacial por región."""
         T, N = len(tracks), len(dets)
         if T == 0 or N == 0:
             return []
 
         Q = self._track_feats(tracks)
         D = self._det_feats(dets)
-        S = Q @ D.T   # (T, N) similitud coseno
+        S = Q @ D.T
 
         gate_mask = self._spatial_gate(tracks, dets, max_dist_px)
-        S[~gate_mask]       = -np.inf
+        S[~gate_mask]             = -np.inf
         S[S < self.sim_threshold] = -np.inf
-
-        assigned_tracks: set[int] = set()
-        assigned_dets:   set[int] = set()
-        assignments: list[tuple[int, int]] = []
 
         valid = np.argwhere(np.isfinite(S))
         if len(valid) == 0:
@@ -270,6 +320,10 @@ class Tracker:
 
         scores = S[valid[:, 0], valid[:, 1]]
         order  = np.argsort(-scores)
+
+        assigned_tracks: set[int] = set()
+        assigned_dets:   set[int] = set()
+        assignments: list[tuple[int, int]] = []
 
         for idx in order:
             ti, di = int(valid[idx, 0]), int(valid[idx, 1])
@@ -353,7 +407,7 @@ class Tracker:
         frame_idx_original: int,
         image_name: str,
         dt_s: float,
-        max_dist_px: float,        # gate de la región actual (calculado en runner)
+        max_dist_px: float,
         timestamp_s: float,
         region_name: str,
         region_idx: int,
@@ -362,25 +416,17 @@ class Tracker:
         Procesa un frame.
 
         dt_s y max_dist_px pueden cambiar entre llamadas al cambiar de región.
-        El ABG usa dt_s directamente para predicción y corrección.
-        El gate espacial usa max_dist_px, definido por región en variables_ptv.py.
-
-        Flujo:
-            0) Filtrar dets en zona enmascarada
-            1) Predicción ABG con dt_s actual
-            2) Asignación SSS con gate = max_dist_px
-            3) Corrección ABG + registro en mm
-            4) Tracks sin match → miss o terminar
-            5) Detecciones sin match → nuevo track
+        Convención de máscara: blanco=ignorar, negro=analizar.
         """
-        # ── 0) Filtrar detecciones enmascaradas ──────────────────
+        # ── 0) Filtrar detecciones en zona enmascarada ───────────
         mask = self._get_mask_for_frame(image_name)
         valid_dets = [d for d in detections if not self._det_in_mask(d, mask)]
         n_filtered = len(detections) - len(valid_dets)
         if n_filtered > 0:
             print(
                 f"[TRACKER] frame {frame_idx_original}: "
-                f"{n_filtered} det(s) en zona enmascarada → descartadas",
+                f"{n_filtered} det(s) en zona enmascarada → descartadas "
+                f"({len(valid_dets)} restantes)",
                 flush=True,
             )
 
@@ -388,17 +434,16 @@ class Tracker:
         for tr in self.active_tracks:
             tr.state = predict_state_abg(tr.state, dt_s)
 
-        # ── 2) Asignación con gate de región ─────────────────────
+        # ── 2) Asignación SSS con gate de región ─────────────────
         assignments = self._assign(self.active_tracks, valid_dets, max_dist_px)
 
         assigned_tracks: set[int] = {ti for ti, _ in assignments}
         assigned_dets:   set[int] = {di for _, di in assignments}
 
-        # ── 3) Corrección ABG y registro ─────────────────────────
+        # ── 3) Corrección ABG y registro en mm ───────────────────
         for ti, di in assignments:
             tr  = self.active_tracks[ti]
             det = valid_dets[di]
-
             tr.state = update_state_abg(
                 pred=tr.state, det=det,
                 alpha=self.cfg.alpha, beta=self.cfg.beta,

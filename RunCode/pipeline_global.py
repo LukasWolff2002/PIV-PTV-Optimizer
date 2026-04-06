@@ -31,10 +31,10 @@ CONDA_BAT_OPTIONS = [
 ]
 CONDA_BAT = next((str(p) for p in CONDA_BAT_OPTIONS if p.exists()), None)
 
-ENV_YOLO           = "yolov11"   # preproceso PIV (CLAHE + máscaras PIV)
-ENV_PIV            = "piv"       # cómputo PIV (OpenPIV)
-ENV_PREPROCESS_PTV = "yolov11"   # preproceso PTV (CLAHE + máscaras camX-ptv-yolo26.pt)
-ENV_PTV            = "yolox4"    # tracking PTV (detector + tracker)
+ENV_YOLO           = "yolov11"
+ENV_PIV            = "piv"
+ENV_PREPROCESS_PTV = "yolov11"
+ENV_PTV            = "yolox4"
 
 RUNCODE_DIR            = PROJECT_ROOT / "RunCode"
 PREPROCESS_SCRIPT      = RUNCODE_DIR / "preprocess_run.py"
@@ -49,47 +49,14 @@ FIX_MASKS_DIR = PROJECT_ROOT / "FixMasks"
 GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQj9_M-1BdxtMDhG9u7j0qpO5WKN5tGZMe6lXdm-DZi-CIhwKY907aNLCLAXHppkda2AI5g2qX_p24S/pub?output=csv"
 
 # ============================================================
-# PERFILES DE CÁMARA
+# PERFILES DE CÁMARA — importados desde variables_piv/ptv
 # ============================================================
-# apply_dynamic_mask : usar modelo YOLO para generar máscara por frame
-# apply_static_mask  : usar máscara fija (FixMasks/cam-X.tiff)
-#
-# Combinaciones posibles:
-#   dynamic=True,  static=False → solo máscara YOLO por frame
-#   dynamic=False, static=True  → solo máscara fija
-#   dynamic=True,  static=True  → intersección de ambas (más restrictivo)
-#   dynamic=False, static=False → sin máscara
-#
-# Aplica tanto a PIV como a PTV — en cada uno se usa el modelo correspondiente:
-#   PIV : camX-piv-yolo26.pt
-#   PTV : camX-ptv-yolo26.pt
+# Para cambiar máscaras o parámetros de cámara, editar directamente:
+#   variables_piv.py → CAM_PROFILES_PIV
+#   variables_ptv.py → CAM_PROFILES_PTV
 
-CAM_PROFILES = {
-    1: dict(
-        fps=220, dt_ms=1000*(1/220), px_per_mm=8,
-        width_px=1024, height_px=1024,
-        apply_dynamic_mask=False,
-        apply_static_mask=True,
-    ),
-    2: dict(
-        fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,
-        width_px=1024, height_px=1024,
-        apply_dynamic_mask=False,
-        apply_static_mask=True,
-    ),
-    3: dict(
-        fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,
-        width_px=1024, height_px=1024,
-        apply_dynamic_mask=True,
-        apply_static_mask=True,
-    ),
-    4: dict(
-        fps=660, dt_ms=1000*(1/660), px_per_mm=10.7,
-        width_px=384, height_px=384,
-        apply_dynamic_mask=True,
-        apply_static_mask=True,
-    ),
-}
+CAM_PROFILES_PIV = piv_vars.CAM_PROFILES_PIV
+CAM_PROFILES_PTV = ptv_vars.CAM_PROFILES_PTV
 
 
 # ============================================================
@@ -246,7 +213,7 @@ def ptv_mask_model_path_for_cam(cam: int) -> Path:
     return ptv_vars.PTV_MODELS_DIR / f"cam{cam}-ptv-yolo26.pt"
 
 
-def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict, int]:
+def cam_profile_for_folder(folder: Path, profiles: dict) -> tuple[int, str, dict, int]:
     info = parse_subfolder_name(folder.name)
     if info is None:
         raise RuntimeError(f"Nombre inválido: {folder.name}")
@@ -256,9 +223,9 @@ def cam_profile_for_folder(folder: Path) -> tuple[int, str, dict, int]:
     toma     = int(info["toma"])
     metodo   = info["metodo"]
     skip_images = get_skip_images_for_folder(mezcla, toma, carbopol, cam, metodo=metodo)
-    if cam not in CAM_PROFILES:
+    if cam not in profiles:
         raise RuntimeError(f"No hay perfil definido para cam={cam}")
-    prof = dict(CAM_PROFILES[cam])
+    prof = dict(profiles[cam])
     prof["fixed_mask_path"] = str(fixed_mask_path_for_cam(cam))
     return cam, carbopol, prof, skip_images
 
@@ -286,7 +253,8 @@ def write_cfg(
     ptv_sub: Path | None,
     cam: int,
     carbopol: str,
-    prof: dict,
+    prof_piv: dict,
+    prof_ptv: dict,
     skip_first_images: int,
 ) -> None:
     pre_info = parse_subfolder_name(pre_sub.name) if pre_sub else None
@@ -296,12 +264,14 @@ def write_cfg(
 
     preprocess_params     = piv_vars.CAM_PREPROCESS_PARAMS.get(f"cam{cam}", {})
     ptv_preprocess_params = ptv_vars.CAM_PREPROCESS_PARAMS_PTV.get(f"cam{cam}", {})
-    fixed_mask_path       = Path(prof["fixed_mask_path"]) if prof.get("fixed_mask_path") else None
+    fixed_mask_path       = Path(prof_piv["fixed_mask_path"]) if prof_piv.get("fixed_mask_path") else None
     piv_model_path        = piv_model_path_for_cam(cam)
     piv_params            = piv_vars.get_piv_params(cam, carbopol)
 
-    apply_dynamic_mask = bool(prof["apply_dynamic_mask"])
-    apply_static_mask  = bool(prof["apply_static_mask"])
+    piv_apply_dynamic = bool(prof_piv["apply_dynamic_mask"])
+    piv_apply_static  = bool(prof_piv["apply_static_mask"])
+    ptv_apply_dynamic = bool(prof_ptv["apply_dynamic_mask"])
+    ptv_apply_static  = bool(prof_ptv["apply_static_mask"])
 
     # ── Regiones temporales PIV ──────────────────────────────────
     temporal_regions_config = None
@@ -337,7 +307,8 @@ def write_cfg(
             "cam":               cam,
             "carbopol":          carbopol,
             "skip_first_images": skip_first_images,
-            "cam_profile":       prof,
+            "cam_profile_piv":   prof_piv,
+            "cam_profile_ptv":   prof_ptv,
             "pre_subfolder":     pre_sub.name if pre_sub else None,
             "ptv_subfolder":     ptv_sub.name if ptv_sub else None,
             "pre_info":          pre_info,
@@ -345,15 +316,12 @@ def write_cfg(
         },
 
         "camera": {
-            "cam":                cam,
-            "fps":                prof["fps"],
-            "dt_ms":              prof["dt_ms"],
-            "px_per_mm":          prof["px_per_mm"],
-            "width_px":           prof["width_px"],
-            "height_px":          prof["height_px"],
-            "apply_dynamic_mask": apply_dynamic_mask,
-            "apply_static_mask":  apply_static_mask,
-            "fixed_mask_path":    str(fixed_mask_path) if fixed_mask_path else None,
+            "cam":       cam,
+            "fps":       prof_piv["fps"],
+            "dt_ms":     prof_piv["dt_ms"],
+            "px_per_mm": prof_piv["px_per_mm"],
+            "width_px":  prof_piv["width_px"],
+            "height_px": prof_piv["height_px"],
         },
 
         # ── PIV: preprocesamiento ─────────────────────────────────
@@ -372,19 +340,19 @@ def write_cfg(
             "temporal_regions":     temporal_regions_config,
         },
 
-        # ── PIV: máscaras dinámicas (camX-piv-yolo26.pt) ─────────
+        # ── PIV: máscaras dinámicas ───────────────────────────────
         "masks": {
-            "model_path":          str(piv_model_path),
-            "images_dir":          str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "output_dir":          str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
-            "conf_thresh":         piv_vars.MASK_CONF,
-            "device":              piv_vars.MASK_DEVICE,
-            "invert_mask":         piv_vars.INVERT_MASK,
-            "delete_existing":     piv_vars.DELETE_EXISTING_MASKS,
-            "apply_dynamic_mask":  apply_dynamic_mask,
-            "apply_static_mask":   apply_static_mask,
-            "fixed_mask_path":     str(fixed_mask_path) if fixed_mask_path else None,
-            "imgsz":               int(prof["width_px"]),
+            "model_path":         str(piv_model_path),
+            "images_dir":         str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "output_dir":         str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "conf_thresh":        piv_vars.MASK_CONF,
+            "device":             piv_vars.MASK_DEVICE,
+            "invert_mask":        piv_vars.INVERT_MASK,
+            "delete_existing":    piv_vars.DELETE_EXISTING_MASKS,
+            "apply_dynamic_mask": piv_apply_dynamic,
+            "apply_static_mask":  piv_apply_static,
+            "fixed_mask_path":    str(fixed_mask_path) if fixed_mask_path else None,
+            "imgsz":              int(prof_piv["width_px"]),
         },
 
         # ── PIV: cómputo ─────────────────────────────────────────
@@ -392,12 +360,12 @@ def write_cfg(
             "images_dir":              str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
             "masks_dir":               str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
             "out_dir":                 str(piv_vars.RESULTS_PIV_ROOT / pre_name) if pre_sub else None,
-            "dt_ms":                   prof["dt_ms"],
-            "px_per_mm":               prof["px_per_mm"],
-            "width_px":                prof["width_px"],
-            "height_px":               prof["height_px"],
-            "apply_dynamic_mask":      apply_dynamic_mask,
-            "apply_static_mask":       apply_static_mask,
+            "dt_ms":                   prof_piv["dt_ms"],
+            "px_per_mm":               prof_piv["px_per_mm"],
+            "width_px":                prof_piv["width_px"],
+            "height_px":               prof_piv["height_px"],
+            "apply_dynamic_mask":      piv_apply_dynamic,
+            "apply_static_mask":       piv_apply_static,
             "fixed_mask_path":         str(fixed_mask_path) if fixed_mask_path else None,
             "window_sizes":            piv_params['window_sizes'],
             "overlaps":                piv_params['overlaps'],
@@ -412,8 +380,7 @@ def write_cfg(
             "clear_txt_before_export": piv_vars.CLEAR_TXT,
         },
 
-        # ── PTV: preprocesamiento de imágenes (entorno yolov11) ───
-        # Genera imágenes en PTVPreprocesadas/<ptv_name>/
+        # ── PTV: preprocesamiento de imágenes ─────────────────────
         "pre_ptv": {
             "input_dir":         str(ptv_sub) if ptv_sub else None,
             "output_dir":        str(ptv_vars.PTV_PREPROCESSED / ptv_name) if ptv_sub else None,
@@ -422,8 +389,7 @@ def write_cfg(
             "preprocess_params": ptv_preprocess_params,
         },
 
-        # ── PTV: máscaras dinámicas (camX-ptv-yolo26.pt, entorno yolov11) ──
-        # Genera máscaras en PTVMascaras/<ptv_name>/
+        # ── PTV: máscaras dinámicas ───────────────────────────────
         "masks_ptv": {
             "model_path":           str(ptv_mask_model_path_for_cam(cam)) if ptv_sub else None,
             "images_dir":           str(ptv_vars.PTV_PREPROCESSED / ptv_name) if ptv_sub else None,
@@ -432,73 +398,52 @@ def write_cfg(
             "device":               str(ptv_vars.MASK_DEVICE_PTV),
             "invert_mask":          ptv_vars.INVERT_MASK_PTV,
             "delete_existing":      ptv_vars.DELETE_EXISTING_MASKS_PTV,
-            "apply_dynamic_mask":   apply_dynamic_mask,
-            "apply_static_mask":    apply_static_mask,
+            "apply_dynamic_mask":   ptv_apply_dynamic,
+            "apply_static_mask":    ptv_apply_static,
             "fixed_mask_path":      str(fixed_mask_path) if fixed_mask_path else None,
             "fixed_mask_threshold": 127,
-            "imgsz":                int(prof["width_px"]),
+            "imgsz":                int(prof_ptv["width_px"]),
         },
 
-        # ── PTV: tracking (entorno yolox4) ────────────────────────
+        # ── PTV: tracking ─────────────────────────────────────────
         "ptv": {
-            # Directorios
-            "images_dir":       str(ptv_sub) if ptv_sub else None,           # originales (referencia)
+            "images_dir":       str(ptv_sub) if ptv_sub else None,
             "preprocessed_dir": str(ptv_vars.PTV_PREPROCESSED / ptv_name) if ptv_sub else None,
             "masks_dir":        str(ptv_vars.PTV_MASKS_ROOT / ptv_name) if ptv_sub else None,
             "out_dir":          str(ptv_vars.RESULTS_PTV_ROOT / ptv_name) if ptv_sub else None,
             "weights_path":     str(ptv_vars.YOLO_TRACK_MODEL),
             "runs_segment_dir": str(ptv_vars.RUNS_SEGMENT_DIR),
-
-            # Cámara
-            "device":     ptv_vars.DEVICE_PTV,
-            "fps":        prof["fps"],
-            "width_px":   prof["width_px"],
-            "height_px":  prof["height_px"],
-            "px_per_mm":  prof["px_per_mm"],
-
-            # Máscaras
-            "apply_dynamic_mask":   apply_dynamic_mask,
-            "apply_static_mask":    apply_static_mask,
-            "fixed_mask_path":      str(fixed_mask_path) if fixed_mask_path else None,
-            "mask_threshold":       127.0,
-
-            # Límite de imágenes y preproceso
-            "max_images":        ptv_vars.MAX_IMAGES,
-            "preprocess_params": ptv_preprocess_params,
-
-            # Regiones temporales PTV
+            "device":           ptv_vars.DEVICE_PTV,
+            "fps":              prof_ptv["fps"],
+            "width_px":         prof_ptv["width_px"],
+            "height_px":        prof_ptv["height_px"],
+            "px_per_mm":        prof_ptv["px_per_mm"],
+            "apply_dynamic_mask": ptv_apply_dynamic,
+            "apply_static_mask":  ptv_apply_static,
+            "fixed_mask_path":    str(fixed_mask_path) if fixed_mask_path else None,
+            "mask_threshold":     127.0,
+            "max_images":         ptv_vars.MAX_IMAGES,
+            "preprocess_params":  ptv_preprocess_params,
             "use_temporal_regions": ptv_vars.USE_TEMPORAL_REGIONS_PTV and ptv_temporal_regions_config is not None,
             "temporal_regions":     ptv_temporal_regions_config,
-
-            # Filtro ABG
             "alpha": ptv_vars.ALPHA,
             "beta":  ptv_vars.BETA,
             "gamma": ptv_vars.GAMMA,
-
-            # Detección y tracking
-            "conf":           ptv_vars.CONF_TRACK,
+            "conf":            ptv_vars.CONF_TRACK,
             "min_frames_keep": ptv_vars.MIN_FRAMES_KEEP,
-            "annotate":       ptv_vars.ANNOTATE,
-            "max_misses":     ptv_vars.MAX_MISSES,
-
-            # Gate (solo para anotación visual)
+            "annotate":        ptv_vars.ANNOTATE,
+            "max_misses":      ptv_vars.MAX_MISSES,
             "gate_x_px":      ptv_vars.GATE_X,
             "gate_y_px":      ptv_vars.GATE_Y,
             "gate_angle_deg": ptv_vars.GATE_ANGLE,
-
-            # Similarity Search Scheme — parámetros por cámara
             "sim_threshold": ptv_vars.get_tracking_params(cam)["sim_threshold"],
-            "max_dist_px":   ptv_vars.get_max_dist_px(cam, CAM_PROFILES),
+            "max_dist_px":   ptv_vars.get_max_dist_px(cam, CAM_PROFILES_PTV),
             "feat_weights":  list(ptv_vars.FEAT_WEIGHTS),
-            "l_ref_px":      ptv_vars.get_l_ref_px(cam, CAM_PROFILES),
-
-            # SAHI inference
+            "l_ref_px":      ptv_vars.get_l_ref_px(cam, CAM_PROFILES_PTV),
             "sahi_scale_factor":  ptv_vars.SAHI_SCALE_FACTOR,
             "sahi_tile_size":     ptv_vars.SAHI_TILE_SIZE,
             "sahi_overlap_ratio": ptv_vars.SAHI_OVERLAP_RATIO,
             "sahi_iou_threshold": ptv_vars.SAHI_IOU_THRESHOLD,
-
-            # Visualizador
             "viz_tail_length":  ptv_vars.VIZ_TAIL_LENGTH,
             "viz_update_every": ptv_vars.VIZ_UPDATE_EVERY,
             "save_images":      ptv_vars.SAVE_IMAGES,
@@ -506,16 +451,13 @@ def write_cfg(
 
         # ── Cleanup ───────────────────────────────────────────────
         "cleanup": {
-            # PIV temporales
-            "processed_dir_to_delete":    str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
-            "masks_dir_to_delete":        str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
+            "processed_dir_to_delete":     str(piv_vars.PROCESSED_ROOT / pre_name) if pre_sub else None,
+            "masks_dir_to_delete":         str(piv_vars.MASKS_ROOT / pre_name) if pre_sub else None,
             "delete_processed_subfolders": piv_vars.DELETE_PROCESSED_SUBFOLDERS,
-            # PTV temporales
-            "ptv_preprocessed_to_delete": str(ptv_vars.PTV_PREPROCESSED / ptv_name) if ptv_sub else None,
-            "ptv_masks_to_delete":        str(ptv_vars.PTV_MASKS_ROOT / ptv_name) if ptv_sub else None,
-            # Otros
-            "delete_predict_folders": ptv_vars.DELETE_PREDICT_FOLDERS,
-            "runs_segment_dir":       str(ptv_vars.RUNS_SEGMENT_DIR),
+            "ptv_preprocessed_to_delete":  str(ptv_vars.PTV_PREPROCESSED / ptv_name) if ptv_sub else None,
+            "ptv_masks_to_delete":         str(ptv_vars.PTV_MASKS_ROOT / ptv_name) if ptv_sub else None,
+            "delete_predict_folders":      ptv_vars.DELETE_PREDICT_FOLDERS,
+            "runs_segment_dir":            str(ptv_vars.RUNS_SEGMENT_DIR),
         },
     }
 
@@ -527,10 +469,6 @@ def write_cfg(
 # ============================================================
 
 def _validate_mask_setup(cam: int, prof: dict, metodo: str) -> None:
-    """
-    Valida que existan los archivos necesarios según la configuración de máscaras.
-    metodo: "piv" o "ptv" — determina qué modelo YOLO verificar.
-    """
     apply_dynamic = bool(prof["apply_dynamic_mask"])
     apply_static  = bool(prof["apply_static_mask"])
 
@@ -542,19 +480,15 @@ def _validate_mask_setup(cam: int, prof: dict, metodo: str) -> None:
             )
 
     if apply_dynamic:
-        if metodo == "piv":
-            model = piv_model_path_for_cam(cam)
-            label = "PIV"
-        else:
-            model = ptv_mask_model_path_for_cam(cam)
-            label = "PTV"
+        model = piv_model_path_for_cam(cam) if metodo == "piv" else ptv_mask_model_path_for_cam(cam)
+        label = metodo.upper()
         if not model.exists():
             raise FileNotFoundError(
                 f"apply_dynamic_mask=True pero no existe modelo {label} para cam={cam}: {model}"
             )
 
     if not apply_dynamic and not apply_static:
-        print(f"[INFO] cam={cam} {metodo.upper()}: sin máscaras (dynamic=False, static=False)", flush=True)
+        print(f"[INFO] cam={cam} {metodo.upper()}: sin máscaras", flush=True)
 
 
 # ============================================================
@@ -562,78 +496,50 @@ def _validate_mask_setup(cam: int, prof: dict, metodo: str) -> None:
 # ============================================================
 
 def run_one_piv_folder(pre_sub: Path) -> None:
-    cam, carbopol, prof, skip_images = cam_profile_for_folder(pre_sub)
+    cam, carbopol, prof_piv, skip_images = cam_profile_for_folder(pre_sub, CAM_PROFILES_PIV)
     info = parse_subfolder_name(pre_sub.name)
     if info:
-        mezcla = f"M{info['mezcla']}"
-        toma   = int(info['toma'])
-        metodo = info['metodo']
-        if not should_process_folder(mezcla, toma, carbopol, metodo=metodo):
-            print(f"[SKIP] Carpeta omitida: {pre_sub.name}", flush=True)
+        if not should_process_folder(f"M{info['mezcla']}", int(info['toma']), carbopol, metodo=info['metodo']):
+            print(f"[SKIP] {pre_sub.name}", flush=True)
             return
 
-    _validate_mask_setup(cam, prof, metodo="piv")
+    _validate_mask_setup(cam, prof_piv, metodo="piv")
 
     piv_model = piv_model_path_for_cam(cam)
-    if bool(prof["apply_dynamic_mask"]) and not piv_model.exists():
+    if prof_piv["apply_dynamic_mask"] and not piv_model.exists():
         raise FileNotFoundError(f"No existe modelo PIV para cam={cam}: {piv_model}")
 
-    write_cfg(
-        pre_sub=pre_sub, ptv_sub=None,
-        cam=cam, carbopol=carbopol, prof=prof,
-        skip_first_images=skip_images,
-    )
+    write_cfg(pre_sub=pre_sub, ptv_sub=None, cam=cam, carbopol=carbopol,
+              prof_piv=prof_piv, prof_ptv=prof_piv, skip_first_images=skip_images)
 
     print(f"\n[PIPE] === PIV: {pre_sub.name} (cam={cam}, car={carbopol}, skip={skip_images}) ===", flush=True)
-    print(f"[PIPE] Modelo PIV: {piv_model.name}", flush=True)
-    print(f"[PIPE] Máscaras: dynamic={prof['apply_dynamic_mask']} static={prof['apply_static_mask']}", flush=True)
+    print(f"[PIPE] Máscaras PIV: dynamic={prof_piv['apply_dynamic_mask']} static={prof_piv['apply_static_mask']}", flush=True)
 
-    print("[PIPE] 1) PRE + MASKS PIV", flush=True)
     run_env(ENV_YOLO, PREPROCESS_SCRIPT)
-
-    print(f"[PIPE] 2) PIV -> {piv_vars.RESULTS_PIV_ROOT / pre_sub.name}", flush=True)
     run_env(ENV_PIV, PIV_SCRIPT)
-
-    print("[PIPE] 3) CLEANUP", flush=True)
     run_any(CLEANUP_SCRIPT)
-
     print(f"[OK] PIV completado: {pre_sub.name}\n", flush=True)
 
 
 def run_one_ptv_folder(ptv_sub: Path) -> None:
-    cam, carbopol, prof, skip_images = cam_profile_for_folder(ptv_sub)
+    cam, carbopol, prof_ptv, skip_images = cam_profile_for_folder(ptv_sub, CAM_PROFILES_PTV)
     info = parse_subfolder_name(ptv_sub.name)
     if info:
-        mezcla = f"M{info['mezcla']}"
-        toma   = int(info['toma'])
-        metodo = info['metodo']
-        if not should_process_folder(mezcla, toma, carbopol, metodo=metodo):
-            print(f"[SKIP] Carpeta omitida: {ptv_sub.name}", flush=True)
+        if not should_process_folder(f"M{info['mezcla']}", int(info['toma']), carbopol, metodo=info['metodo']):
+            print(f"[SKIP] {ptv_sub.name}", flush=True)
             return
 
-    _validate_mask_setup(cam, prof, metodo="ptv")
+    _validate_mask_setup(cam, prof_ptv, metodo="ptv")
 
-    write_cfg(
-        pre_sub=None, ptv_sub=ptv_sub,
-        cam=cam, carbopol=carbopol, prof=prof,
-        skip_first_images=skip_images,
-    )
+    write_cfg(pre_sub=None, ptv_sub=ptv_sub, cam=cam, carbopol=carbopol,
+              prof_piv=prof_ptv, prof_ptv=prof_ptv, skip_first_images=skip_images)
 
     print(f"\n[PIPE] === PTV: {ptv_sub.name} (cam={cam}, car={carbopol}, skip={skip_images}) ===", flush=True)
-    print(f"[PIPE] Máscaras: dynamic={prof['apply_dynamic_mask']} static={prof['apply_static_mask']}", flush=True)
+    print(f"[PIPE] Máscaras PTV: dynamic={prof_ptv['apply_dynamic_mask']} static={prof_ptv['apply_static_mask']}", flush=True)
 
-    # Paso 1: preproceso imágenes + máscaras dinámicas PTV (entorno yolov11)
-    print("[PIPE] 1) PREPROCESO PTV (imágenes + máscaras camX-ptv-yolo26.pt)", flush=True)
     run_env(ENV_PREPROCESS_PTV, PREPROCESS_PTV_SCRIPT)
-
-    # Paso 2: tracking PTV (entorno yolox4)
-    print(f"[PIPE] 2) PTV TRACKING -> {ptv_vars.RESULTS_PTV_ROOT / ptv_sub.name}", flush=True)
     run_env(ENV_PTV, PTV_SCRIPT)
-
-    # Paso 3: cleanup carpetas temporales PTV
-    print("[PIPE] 3) CLEANUP PTV", flush=True)
     run_any(CLEANUP_SCRIPT)
-
     print(f"[OK] PTV completado: {ptv_sub.name}\n", flush=True)
 
 
@@ -652,9 +558,12 @@ def main() -> None:
         if not ptv_vars.PTV_BASE_DIR.exists():
             raise FileNotFoundError(f"PTV_BASE_DIR no existe: {ptv_vars.PTV_BASE_DIR}")
 
-    if any(CAM_PROFILES[c]["apply_static_mask"] for c in CAM_PROFILES):
-        if not FIX_MASKS_DIR.exists():
-            raise FileNotFoundError(f"FixMasks dir no existe: {FIX_MASKS_DIR}")
+    needs_static = (
+        any(CAM_PROFILES_PIV[c]["apply_static_mask"] for c in CAM_PROFILES_PIV) or
+        any(CAM_PROFILES_PTV[c]["apply_static_mask"] for c in CAM_PROFILES_PTV)
+    )
+    if needs_static and not FIX_MASKS_DIR.exists():
+        raise FileNotFoundError(f"FixMasks dir no existe: {FIX_MASKS_DIR}")
 
     piv_folders: list[Path] = []
     ptv_folders: list[Path] = []
@@ -671,7 +580,7 @@ def main() -> None:
         if RUN_MODE == "both" and not ptv_folders:
             msg = f"[WARN] No hay carpetas PTV con metodo={ptv_vars.PTV_METODO}"
             if ALLOW_BOTH_WITHOUT_PTV:
-                print(msg + " -> omitiendo PTV.", flush=True)
+                print(msg + " → omitiendo PTV.", flush=True)
             else:
                 raise RuntimeError(msg)
 
