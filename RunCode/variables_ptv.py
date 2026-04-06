@@ -234,20 +234,20 @@ TEMPORAL_REGIONS_PTV_CAR05 = {
     1: [
         PTVTemporalRegion(name="alta_velocidad",         start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0, max_dist_mm=2.0),
         PTVTemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=3.0,  skip_frames=2,  fps=220.0, max_dist_mm=2.5),
-        PTVTemporalRegion(name="baja_velocidad",         start_time=3.0,  end_time=8.0,  skip_frames=4,  fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="muy_baja_velocidad",     start_time=8.0,  end_time=15.0, skip_frames=8,  fps=220.0, max_dist_mm=1.5),
-        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=1.0),
+        PTVTemporalRegion(name="baja_velocidad",         start_time=3.0,  end_time=8.0,  skip_frames=4,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="muy_baja_velocidad",     start_time=8.0,  end_time=15.0, skip_frames=8,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=2.5),
     ],
     2: [
         PTVTemporalRegion(name="alta_velocidad",         start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0, max_dist_mm=2.0),
         PTVTemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=3.0,  skip_frames=4,  fps=220.0, max_dist_mm=2.5),
-        PTVTemporalRegion(name="baja_velocidad",         start_time=3.0,  end_time=15.0,  skip_frames=8,  fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=1.0),
+        PTVTemporalRegion(name="baja_velocidad",         start_time=3.0,  end_time=15.0,  skip_frames=8,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=2.5),
     ],
     3: [
         PTVTemporalRegion(name="sin_carbopol",           start_time=0.0,  end_time=10,  skip_frames=10, fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="baja_velocidad",         start_time=10,  end_time=15,  skip_frames=8,  fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=1.0),
+        PTVTemporalRegion(name="baja_velocidad",         start_time=10,  end_time=15,  skip_frames=8,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=2.5),
     ],
     4: [
         PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=660.0, max_dist_mm=2.0),
@@ -268,7 +268,7 @@ def get_ptv_temporal_regions(cam: int, carbopol: str) -> list[PTVTemporalRegion]
 
 
 # ---------- PARÁMETROS PTV ----------
-MAX_IMAGES      = 2200
+MAX_IMAGES      = 22000
 ALPHA           = 0.95
 BETA            = 0.95
 GAMMA           = 0.05
@@ -289,10 +289,10 @@ FIBER_WIDTH_MM  = 0.2
 FEAT_WEIGHTS = (1.0, 1.0, 0.3, 2.0, 2.0)
 
 CAM_TRACKING_PARAMS = {
-    1: dict(sim_threshold=0.95, max_dist_mm=2.0),
-    2: dict(sim_threshold=0.95, max_dist_mm=2.0),
-    3: dict(sim_threshold=0.95, max_dist_mm=2.0),
-    4: dict(sim_threshold=0.95, max_dist_mm=2.0),
+    1: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    2: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    3: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    4: dict(sim_threshold=0.99, max_dist_mm=2.0),
 }
 
 SAHI_SCALE_FACTOR  = 2
