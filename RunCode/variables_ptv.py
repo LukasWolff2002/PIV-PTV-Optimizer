@@ -361,13 +361,13 @@ CAM_PROFILES_PTV = {
     3: dict(
         fps=220, dt_ms=1000*(1/220), px_per_mm=7.8,
         width_px=1024, height_px=1024,
-        apply_dynamic_mask=True,
+        apply_dynamic_mask=False,
         apply_static_mask=True,
     ),
     4: dict(
         fps=660, dt_ms=1000*(1/660), px_per_mm=10.7,
         width_px=384, height_px=384,
-        apply_dynamic_mask=True,
+        apply_dynamic_mask=False,
         apply_static_mask=True,
     ),
 }
