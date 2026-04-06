@@ -216,10 +216,11 @@ TEMPORAL_REGIONS_PTV_CAR02 = {
         PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=4.0),
     ],
     3: [
-        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=2.0,  skip_frames=0, fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="media_velocidad",    start_time=2.0,  end_time=5.0,  skip_frames=2, fps=220.0, max_dist_mm=3.0),
-        PTVTemporalRegion(name="baja_velocidad",     start_time=5.0,  end_time=7.0,  skip_frames=4, fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="muy_baja_velocidad", start_time=7.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=1.5),
+        PTVTemporalRegion(name="sin_carbopol",     start_time=0.0,  end_time=0.5,  skip_frames=10, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="alta_velocidad",    start_time=0.5,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=3.0,  skip_frames=2, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=3.0,  end_time=6.0,  skip_frames=4, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=4.0),
     ],
     4: [
         PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=4.5,  skip_frames=0, fps=660.0, max_dist_mm=2.0),
@@ -232,18 +233,21 @@ TEMPORAL_REGIONS_PTV_CAR02 = {
 TEMPORAL_REGIONS_PTV_CAR05 = {
     1: [
         PTVTemporalRegion(name="alta_velocidad",         start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=5.0,  skip_frames=1,  fps=220.0, max_dist_mm=2.5),
-        PTVTemporalRegion(name="baja_velocidad",         start_time=5.0,  end_time=8.0,  skip_frames=2,  fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="muy_baja_velocidad",     start_time=8.0,  end_time=15.0, skip_frames=4,  fps=220.0, max_dist_mm=1.5),
-        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=8,  fps=220.0, max_dist_mm=1.0),
+        PTVTemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=5.0,  skip_frames=2,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="baja_velocidad",         start_time=5.0,  end_time=8.0,  skip_frames=4,  fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="muy_baja_velocidad",     start_time=8.0,  end_time=15.0, skip_frames=8,  fps=220.0, max_dist_mm=1.5),
+        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=1.0),
     ],
     2: [
-        PTVTemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=15.0, skip_frames=8,  fps=220.0, max_dist_mm=2.5),
-        PTVTemporalRegion(name="media_velocidad", start_time=15.0, end_time=40.0, skip_frames=16, fps=220.0, max_dist_mm=1.5),
+        PTVTemporalRegion(name="alta_velocidad",         start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=3.0,  skip_frames=4,  fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="baja_velocidad",         start_time=3.0,  end_time=15.0,  skip_frames=8,  fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=1.0),
     ],
     3: [
-        PTVTemporalRegion(name="sin_datos",      start_time=0.0,  end_time=8.0,  skip_frames=0,  fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="alta_velocidad", start_time=8.0,  end_time=40.0, skip_frames=16, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="sin_carbopol",           start_time=0.0,  end_time=10,  skip_frames=10, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="baja_velocidad",         start_time=10,  end_time=15,  skip_frames=8,  fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=1.0),
     ],
     4: [
         PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=660.0, max_dist_mm=2.0),
