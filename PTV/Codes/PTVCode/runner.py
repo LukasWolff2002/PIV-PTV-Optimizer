@@ -56,68 +56,97 @@ def _save_json(data: dict, path: Path) -> None:
     )
 
 
+def _effective_frames(tr: "Track", fps: float) -> float:
+    """
+    Frames originales cubiertos por el track.
+
+    Cada record del history tiene su dt_s real (variable entre regiones).
+    Sumamos dt_s * fps por cada observacion: equivale a contar cuantos
+    frames originales consecutivos abarca el track, sin importar el stride.
+
+    Ejemplos:
+      3 hits en muy_baja_velocidad (stride=9):  3 * 9  = 27 frames
+      5 hits en alta_velocidad     (stride=1):  5 * 1  =  5 frames
+      2 hits stride=1 + 2 hits stride=9:        2 + 18 = 20 frames
+    """
+    return sum(rec.dt_s * fps for rec in tr.history)
+
+
 # ─────────────────────────────────────────────
 # REGIONES TEMPORALES
 # ─────────────────────────────────────────────
 
-def _build_frame_schedule(
-    all_images: list[Path],
-    fps: float,
+def _build_schedule_from_json(
+    preprocessed_dir: Path,
     temporal_regions: list[dict],
     global_max_dist_px: float,
     px_per_mm: float,
 ) -> list[dict]:
     """
-    Construye la lista ordenada de frames que el tracker debe procesar,
-    con su dt_s, max_dist_px, region_name y region_idx correspondientes.
+    Construye el schedule leyendo schedule.json generado por preprocess_run_ptv.py.
 
-    max_dist_px por entry:
-        - Si la región define max_dist_mm → convierte a px con px_per_mm.
-        - Si no (None) → usa global_max_dist_px como fallback.
+    preprocess_run_ptv.py guarda en PTVPreprocesadas/<sub>/schedule.json
+    exactamente las imágenes que seleccionó, con su frame_idx_original,
+    timestamp_s, dt_s y region_name ya calculados correctamente.
 
-    Estructura de un bloque PTV:
-        img[i], img[i + stride], img[i + 2*stride], ...
-    donde stride = skip_frames + 1.
+    El runner solo necesita:
+      - resolver img_path = preprocessed_dir / entry["preprocessed_name"]
+      - añadir max_dist_px desde la config de la región correspondiente
+
+    De este modo no hay doble stride: el preprocesador ya aplicó los saltos
+    al seleccionar las imágenes; el runner simplemente las lee en orden.
 
     Returns:
         Lista de dicts con claves:
             img_path, frame_idx_original, timestamp_s,
             dt_s, max_dist_px, region_name, region_idx
     """
-    n_total = len(all_images)
+    schedule_json = preprocessed_dir / "schedule.json"
+    if not schedule_json.exists():
+        raise FileNotFoundError(
+            f"No se encontró schedule.json en {preprocessed_dir}.\n"
+            f"Asegúrate de haber corrido preprocess_run_ptv.py antes del tracker."
+        )
+
+    entries = json.loads(schedule_json.read_text(encoding="utf-8"))
+
+    # Mapa region_name → max_dist_px para lookup O(1)
+    region_gate: dict[str, float] = {}
+    for r in temporal_regions:
+        mm = r.get("max_dist_mm")
+        region_gate[r["name"]] = float(mm) * px_per_mm if mm is not None else global_max_dist_px
+
     schedule: list[dict] = []
-    seen_idx: set[int] = set()
+    missing: list[str] = []
 
-    for r_idx, r in enumerate(temporal_regions):
-        start_frame = int(r["start_time"] * fps)
-        end_frame   = int(r["end_time"] * fps) if r["end_time"] is not None else n_total
-        end_frame   = min(end_frame, n_total)
-        skip        = int(r["skip_frames"])
-        stride      = skip + 1
-        dt_s        = stride / fps
+    for entry in entries:
+        img_path = preprocessed_dir / entry["preprocessed_name"]
+        if not img_path.exists():
+            missing.append(entry["preprocessed_name"])
+            continue
 
-        # Gate espacial: región override o fallback global
-        region_max_dist_mm = r.get("max_dist_mm")   # None si no está en el JSON
-        if region_max_dist_mm is not None:
-            max_dist_px = float(region_max_dist_mm) * px_per_mm
-        else:
-            max_dist_px = global_max_dist_px
+        region_name = entry["region_name"]
+        max_dist_px = region_gate.get(region_name, global_max_dist_px)
 
-        idx = start_frame
-        while idx < end_frame:
-            if idx < n_total and idx not in seen_idx:
-                schedule.append({
-                    "img_path":           all_images[idx],
-                    "frame_idx_original": idx,
-                    "timestamp_s":        idx / fps,
-                    "dt_s":               dt_s,
-                    "max_dist_px":        max_dist_px,
-                    "region_name":        r["name"],
-                    "region_idx":         r_idx,
-                })
-                seen_idx.add(idx)
-            idx += stride
+        schedule.append({
+            "img_path":           img_path,
+            "frame_idx_original": int(entry["frame_idx_original"]),
+            "timestamp_s":        float(entry["timestamp_s"]),
+            "dt_s":               float(entry["dt_s"]),
+            "max_dist_px":        max_dist_px,
+            "region_name":        region_name,
+            "region_idx":         int(entry["region_idx"]),
+        })
 
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} imágenes del schedule.json no existen en {preprocessed_dir}.\n"
+            f"Ejemplo faltante: {missing[0]}\n"
+            f"Vuelve a correr preprocess_run_ptv.py."
+        )
+
+    # schedule.json ya viene ordenado por frame_idx_original, pero lo
+    # garantizamos explícitamente por si acaso.
     schedule.sort(key=lambda x: x["frame_idx_original"])
     return schedule
 
@@ -127,7 +156,7 @@ def _build_frame_schedule_no_regions(
     fps: float,
     global_max_dist_px: float,
 ) -> list[dict]:
-    """Fallback: todos los frames consecutivos, dt = 1/fps."""
+    """Fallback sin regiones temporales: todos los frames consecutivos, dt = 1/fps."""
     dt_s = 1.0 / fps
     return [
         {
@@ -248,10 +277,6 @@ def _save_annotated_frames_px(
 def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     ensure_dir(run_cfg.out_dir)
 
-    all_images = _list_images(run_cfg.images_dir, max_images=run_cfg.max_images)
-    if not all_images:
-        raise RuntimeError(f"No hay imágenes preprocesadas en: {run_cfg.images_dir}")
-
     fps            = run_cfg.fps
     px_per_mm      = run_cfg.px_per_mm
     # Gate global (fallback para regiones sin max_dist_mm explícito)
@@ -259,22 +284,35 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
 
     # ── Construir schedule de frames ──────────────────────────────
     if run_cfg.use_temporal_regions and run_cfg.temporal_regions:
-        schedule = _build_frame_schedule(
-            all_images, fps,
-            run_cfg.temporal_regions,
-            global_max_dist_px,
-            px_per_mm,
+        # Lee schedule.json generado por preprocess_run_ptv.py.
+        # Ese archivo ya tiene los frame_idx_original, timestamp_s y dt_s
+        # correctos — el preprocesador ya aplicó los strides al seleccionar
+        # las imágenes; aquí solo las leemos en orden sin doble salto.
+        schedule = _build_schedule_from_json(
+            preprocessed_dir    = run_cfg.images_dir,
+            temporal_regions    = run_cfg.temporal_regions,
+            global_max_dist_px  = global_max_dist_px,
+            px_per_mm           = px_per_mm,
         )
-        mode_str = f"regiones temporales ({len(run_cfg.temporal_regions)} regiones)"
+        mode_str = f"schedule.json ({len(run_cfg.temporal_regions)} regiones)"
     else:
+        # Sin regiones: leer todas las imágenes preprocesadas en orden
+        all_images = _list_images(run_cfg.images_dir, max_images=run_cfg.max_images)
+        if not all_images:
+            raise RuntimeError(f"No hay imágenes preprocesadas en: {run_cfg.images_dir}")
         schedule = _build_frame_schedule_no_regions(
             all_images, fps, global_max_dist_px,
         )
         mode_str = "sin regiones (frames consecutivos)"
 
+    if not schedule:
+        raise RuntimeError(
+            f"El schedule está vacío. Comprueba que preprocess_run_ptv.py "
+            f"generó schedule.json en {run_cfg.images_dir}."
+        )
+
     print(f"[PTV] images_dir (preprocesadas) : {run_cfg.images_dir}", flush=True)
     print(f"[PTV] out_dir                    : {run_cfg.out_dir}", flush=True)
-    print(f"[PTV] total imágenes disponibles : {len(all_images)}", flush=True)
     print(f"[PTV] frames en schedule         : {len(schedule)}", flush=True)
     print(f"[PTV] modo temporal              : {mode_str}", flush=True)
     print(f"[PTV] px_per_mm                  : {px_per_mm}", flush=True)
@@ -380,12 +418,14 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
 
     tracker.close_all()
     tracks_all      = tracker.get_all_tracks()
-    tracks_filtered = [tr for tr in tracks_all
-                       if len(tr.history) >= run_cfg.min_frames_keep]
+    tracks_filtered = [
+        tr for tr in tracks_all
+        if _effective_frames(tr, fps) >= run_cfg.min_frames_keep
+    ]
 
     print(
         f"[PTV] Tracks totales: {len(tracks_all)} | "
-        f"filtrados (≥{run_cfg.min_frames_keep} frames): {len(tracks_filtered)}",
+        f"filtrados (≥{run_cfg.min_frames_keep} frames orig): {len(tracks_filtered)}",
         flush=True,
     )
 

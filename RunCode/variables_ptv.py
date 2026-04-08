@@ -204,10 +204,10 @@ class PTVTemporalRegion:
 # ---------- REGIONES TEMPORALES CARBOPOL 02 ----------
 TEMPORAL_REGIONS_PTV_CAR02 = {
     1: [
-        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=3.0,  skip_frames=2, fps=220.0, max_dist_mm=3.0),
-        PTVTemporalRegion(name="baja_velocidad",     start_time=3.0,  end_time=6.0,  skip_frames=4, fps=220.0, max_dist_mm=3.0),
-        PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=4.0),
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=0.5),
+        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=3.0,  skip_frames=2, fps=220.0, max_dist_mm=0.5),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=3.0,  end_time=6.0,  skip_frames=4, fps=220.0, max_dist_mm=0.5),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=0.5),
     ],
     2: [
         PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=2.0),
@@ -286,13 +286,15 @@ GATE_ANGLE = 5
 FIBER_LENGTH_MM = 13.0
 FIBER_WIDTH_MM  = 0.2
 
-FEAT_WEIGHTS = (1.0, 1.0, 0.3, 2.0, 2.0)
+FEAT_WEIGHTS = (2.0, 2.0, 1.0, 1.5, 1.5)
+
+# (w_cos2θ, w_sin2θ, w_largo, w_cx, w_cy)
 
 CAM_TRACKING_PARAMS = {
-    1: dict(sim_threshold=0.99, max_dist_mm=2.0),
-    2: dict(sim_threshold=0.99, max_dist_mm=2.0),
-    3: dict(sim_threshold=0.99, max_dist_mm=2.0),
-    4: dict(sim_threshold=0.99, max_dist_mm=2.0),
+    1: dict(sim_threshold=0.999, max_dist_mm=2.0),
+    2: dict(sim_threshold=0.999, max_dist_mm=2.0),
+    3: dict(sim_threshold=0.999, max_dist_mm=2.0),
+    4: dict(sim_threshold=0.999, max_dist_mm=2.0),
 }
 
 SAHI_SCALE_FACTOR  = 2
