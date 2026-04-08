@@ -5,7 +5,7 @@ Filtro alpha-beta-gamma (ABG) para predicción y actualización de estado.
 """
 from __future__ import annotations
 from .models import TrackState, Detection
-from .image_utils import wrap_angle_deg
+from .image_utils import wrap_angle_deg, wrap_angle_fiber
 
 
 def predict_state_abg(state: TrackState, dt: float) -> TrackState:
@@ -40,7 +40,12 @@ def update_state_abg(
 
     rx = det.cx - pred.x
     ry = det.cy - pred.y
-    ra = wrap_angle_deg(det.angle_deg - pred.angle_deg)
+
+    # Residuo angular con simetría π: las fibras son indistinguibles a θ y θ+180°.
+    # wrap_angle_fiber acota el residuo a [-90°, 90°), evitando que saltos
+    # aparentes de ±180° (por ambigüedad de orientación en YOLO) disparen
+    # omega a decenas de miles de deg/s y generen rotación espúrea infinita.
+    ra = wrap_angle_fiber(det.angle_deg - pred.angle_deg)
 
     return TrackState(
         x=pred.x + alpha * rx,

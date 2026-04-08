@@ -30,8 +30,26 @@ def wrap_angle_deg(angle_deg: float) -> float:
     return (angle_deg + 180.0) % 360.0 - 180.0
 
 
+def wrap_angle_fiber(angle_deg: float) -> float:
+    """
+    Normaliza diferencia angular para fibras, que tienen simetría π.
+
+    Una fibra orientada a θ es idéntica a una orientada a θ+180°.
+    Por tanto la diferencia mínima entre dos ángulos de fibra vive en
+    [-90°, 90°), no en [-180°, 180°).
+
+    Usar para el residuo angular en el filtro ABG:
+        ra = wrap_angle_fiber(det.angle_deg - pred.angle_deg)
+
+    Ejemplos:
+        179° - (-1°) = 180° → wrap_angle_fiber → 0°   (fibra no giró)
+        10°  - 170°  = -160° → wrap_angle_fiber → 20°  (giró 20°, no 160°)
+    """
+    return (angle_deg + 90.0) % 180.0 - 90.0
+
+
 def angle_diff_deg(a_deg: float, b_deg: float) -> float:
-    """Diferencia angular mínima en grados."""
+    """Diferencia angular mínima en grados (rango completo [-180, 180))."""
     return abs(wrap_angle_deg(a_deg - b_deg))
 
 
