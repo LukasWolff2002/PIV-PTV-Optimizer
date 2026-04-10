@@ -204,16 +204,16 @@ class PTVTemporalRegion:
 # ---------- REGIONES TEMPORALES CARBOPOL 02 ----------
 TEMPORAL_REGIONS_PTV_CAR02 = {
     1: [
-        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=3.0),
-        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=3.0,  skip_frames=2, fps=220.0, max_dist_mm=2.5),
-        PTVTemporalRegion(name="baja_velocidad",     start_time=3.0,  end_time=6.0,  skip_frames=4, fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=2.5,  skip_frames=0, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=2.5,  end_time=5.0,  skip_frames=2, fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=5.0,  end_time=8.0,  skip_frames=4, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=8.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=2.0),
     ],
     2: [
-        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=1.5,  skip_frames=0, fps=220.0, max_dist_mm=3.0),
-        PTVTemporalRegion(name="media_velocidad",    start_time=1.5,  end_time=3.0,  skip_frames=2, fps=220.0, max_dist_mm=2.5),
-        PTVTemporalRegion(name="baja_velocidad",     start_time=3.0,  end_time=6.0,  skip_frames=4, fps=220.0, max_dist_mm=2.0),
-        PTVTemporalRegion(name="muy_baja_velocidad", start_time=6.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=3,  skip_frames=0, fps=220.0, max_dist_mm=3.0),
+        PTVTemporalRegion(name="media_velocidad",    start_time=3,  end_time=5.0,  skip_frames=2, fps=220.0, max_dist_mm=2.5),
+        PTVTemporalRegion(name="baja_velocidad",     start_time=5.0,  end_time=8.0,  skip_frames=4, fps=220.0, max_dist_mm=2.0),
+        PTVTemporalRegion(name="muy_baja_velocidad", start_time=8.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=2.0),
     ],
     3: [
         PTVTemporalRegion(name="sin_carbopol",     start_time=0.0,  end_time=0.5,  skip_frames=10, fps=220.0, max_dist_mm=2.0),
@@ -269,9 +269,41 @@ def get_ptv_temporal_regions(cam: int, carbopol: str) -> list[PTVTemporalRegion]
 
 # ---------- PARÁMETROS PTV ----------
 MAX_IMAGES      = 22000
+
+# ── Filtro ABG — cinemática LINEAL (posición x, y) ───────────────────────────
+# alpha : corrección de posición por frame  → alto para seguir bien la posición
+# beta  : ganancia de velocidad lineal       → alto para responder rápido a cambios
+# gamma : ganancia de aceleración lineal     → bajo (flujo laminar ≈ v cte)
 ALPHA           = 0.95
 BETA            = 0.95
 GAMMA           = 0.05
+
+# ── Filtro ABG — cinemática ANGULAR (ángulo θ, omega, alpha_ang) ─────────────
+# Motivación del desacople:
+#   Con dt = 1/220 s, usar BETA en ángulo produce:
+#     delta_omega = (BETA / dt) * residuo = (0.95 * 220) * 7° ≈ 1460 deg/s
+#   Una fibra en flujo laminar (ecuación de Jeffery) rota a 50-100 deg/s máximo.
+#   El ruido PCA del detector para una fibra de aspect ratio ~65 es ≈ 5-10°.
+#   → Se necesita BETA_ANG << BETA para que el filtro no amplifique ese ruido.
+#
+# ALPHA_ANG  : igual a ALPHA — corrige la posición angular sin amplificar por 1/dt
+# BETA_ANG   : ganancia de omega — debe ser bajo; con 0.05 y ruido de 7°:
+#                delta_omega = (0.05 * 220) * 7° ≈ 77 deg/s  ✓ plausible
+# GAMMA_ANG  : ganancia de alpha_ang — casi nulo; en flujo laminar la aceleración
+#              angular es despreciable
+# OMEGA_DECAY    : amortiguamiento de omega en cada predicción (0 < decay < 1).
+#                  omega espúreo decae a cero si no hay residuos angulares
+#                  consistentes que lo sostengan. Una fibra que realmente rota
+#                  renueva su omega en cada update y no lo nota.
+#                  0.92^15 ≈ 0.29  → omega erróneo cae al 30% en ~15 frames
+# ALPHA_ANG_DECAY: amortiguamiento de alpha_ang, más agresivo que omega
+#                  (la aceleración angular raramente es física en este fluido)
+ALPHA_ANG       = 0.95
+BETA_ANG        = 0.05
+GAMMA_ANG       = 0.001
+OMEGA_DECAY     = 0.92
+ALPHA_ANG_DECAY = 0.80
+
 CONF_TRACK      = 0.1
 MIN_FRAMES_KEEP = 5
 ANNOTATE        = True

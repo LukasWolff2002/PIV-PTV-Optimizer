@@ -11,6 +11,9 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class TrackingConfig:
+    # ==========================================
+    # 1. VARIABLES SIN VALOR POR DEFECTO (Arriba)
+    # ==========================================
     images_dir: Path          # imágenes PREPROCESADAS (PTVPreprocesadas/<sub>/)
     original_images_dir: Path # imágenes originales (para referencia en summary)
     out_dir: Path
@@ -22,7 +25,6 @@ class TrackingConfig:
     width_px: int
     height_px: int
 
-    # ── Máscaras ────────────────────────────────────────────────
     apply_dynamic_mask: bool
     apply_static_mask: bool
     masks_dir: Path | None        # PTVMascaras/<sub>/ (dinámicas, ya generadas)
@@ -30,19 +32,28 @@ class TrackingConfig:
     mask_threshold: float         # umbral para binarizar máscara (default 127)
 
     preprocess_params: dict | None
-
     max_images: int | None
+
     alpha: float
     beta: float
     gamma: float
-
+    
+    # Estas estaban abajo y las subimos:
     gate_x_px: float
     gate_y_px: float
     gate_angle_deg: float
-
     conf: float
     min_frames_keep: int
     annotate: bool
+
+    # ==========================================
+    # 2. VARIABLES CON VALOR POR DEFECTO (Abajo)
+    # ==========================================
+    alpha_ang: float       = 0.95
+    beta_ang: float        = 0.05
+    gamma_ang: float       = 0.001
+    omega_decay: float     = 0.92
+    alpha_ang_decay: float = 0.80
 
     device: str | int | None = None
     max_misses: int = 0
@@ -60,7 +71,6 @@ class TrackingConfig:
     sahi_iou_threshold: float = 0.3
 
     # ── Skip de imágenes iniciales ───────────────────────────────
-    # Aplicado ANTES del preproceso; el runner ya recibe imágenes limpias.
     skip_first_images: int = 0
 
     # ── Regiones temporales PTV ──────────────────────────────────
@@ -78,7 +88,6 @@ class TrackingConfig:
     def dt(self) -> float:
         """dt base (frames consecutivos). El runner lo sobreescribe por región."""
         return 1.0 / self.fps
-
 
 def build_tracking_config(cfg: dict) -> TrackingConfig:
     """Construye TrackingConfig desde el dict del JSON de pipeline."""
@@ -116,6 +125,11 @@ def build_tracking_config(cfg: dict) -> TrackingConfig:
         alpha=float(ptv["alpha"]),
         beta=float(ptv["beta"]),
         gamma=float(ptv["gamma"]),
+        alpha_ang=float(ptv.get("alpha_ang", 0.95)),
+        beta_ang=float(ptv.get("beta_ang", 0.05)),
+        gamma_ang=float(ptv.get("gamma_ang", 0.001)),
+        omega_decay=float(ptv.get("omega_decay", 0.92)),
+        alpha_ang_decay=float(ptv.get("alpha_ang_decay", 0.80)),
         gate_x_px=float(ptv["gate_x_px"]),
         gate_y_px=float(ptv["gate_y_px"]),
         gate_angle_deg=float(ptv["gate_angle_deg"]),

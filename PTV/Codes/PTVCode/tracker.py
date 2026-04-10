@@ -432,7 +432,11 @@ class Tracker:
 
         # ── 1) Predicción ABG ────────────────────────────────────
         for tr in self.active_tracks:
-            tr.state = predict_state_abg(tr.state, dt_s)
+            tr.state = predict_state_abg(
+                tr.state, dt_s,
+                omega_decay=getattr(self.cfg, "omega_decay", 0.92),
+                alpha_ang_decay=getattr(self.cfg, "alpha_ang_decay", 0.80),
+            )
 
         # ── 2) Asignación SSS con gate de región ─────────────────
         assignments = self._assign(self.active_tracks, valid_dets, max_dist_px)
@@ -448,6 +452,9 @@ class Tracker:
                 pred=tr.state, det=det,
                 alpha=self.cfg.alpha, beta=self.cfg.beta,
                 gamma=self.cfg.gamma, dt=dt_s,
+                alpha_ang=getattr(self.cfg, "alpha_ang", 0.95),
+                beta_ang=getattr(self.cfg,  "beta_ang",  0.05),
+                gamma_ang=getattr(self.cfg, "gamma_ang", 0.001),
             )
             tr.hits   += 1
             tr.misses  = 0
