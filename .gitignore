@@ -3,6 +3,7 @@ PIV/Tomas/
 PTV/Codes/Segmentation-Models/yolo11s-seg.pt
 PTV/Tomas/
 PTV/Otras/
+PTV/Realizadas/
 ResultadosPIV/
 ResultadosPTV/
 Masks/
@@ -10,3 +11,4 @@ TomasProcesadas/
 pipeline_config.json
 fotos_random/
 PTVPreprocesadas/
+ResultadosPTVFiltrado/
