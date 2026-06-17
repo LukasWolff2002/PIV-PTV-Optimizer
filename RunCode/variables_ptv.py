@@ -318,6 +318,23 @@ GATE_ANGLE = 5
 FIBER_LENGTH_MM = 13.0
 FIBER_WIDTH_MM  = 0.2
 
+# ---------- DPTV (Depth-from-Defocus PTV) ----------
+# Estimates fiber depth from the apparent widening of the fiber image.
+# Physics: W_apparent² = W_ideal² + (k_blur × Δz)²
+#   W_ideal  = FIBER_WIDTH_MM × px_per_mm  (expected in-focus width in px)
+#   blur_px  = sqrt(W_apparent² - W_ideal²)  (defocus contribution)
+#   depth_mm = blur_px / DPTV_K_BLUR_PX_PER_MM  (|Δz| from focal plane)
+#
+# DPTV_K_BLUR_PX_PER_MM: calibrate by placing fibers at known depths and
+#   measuring the increase in apparent width. Set to None to output only
+#   defocus_score and blur_mm without depth_mm.
+#
+# DPTV_NOISE_WIDTH_PX: PCA width measurement noise (≈1-2 px for 0.2 mm fibers).
+#   Governs depth_confidence: tanh(blur_px / noise_px).
+DPTV_ENABLED          = True
+DPTV_NOISE_WIDTH_PX   = 1.0   # expected PCA width noise in pixels
+DPTV_K_BLUR_PX_PER_MM = None  # px/mm depth — needs calibration; None = uncalibrated
+
 FEAT_WEIGHTS = (1.5, 1.5, 1.0, 2.0, 2.0)
 
 # (w_cos2θ, w_sin2θ, w_largo, w_cx, w_cy)

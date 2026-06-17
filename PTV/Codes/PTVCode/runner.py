@@ -23,6 +23,7 @@ from .config import TrackingConfig
 from .models import Detection, Track
 from .detector import FiberYOLODetector
 from .tracker import Tracker
+from .dptv import DPTVEstimator, DPTVConfig
 from .image_utils import (
     ensure_dir, read_image_any,
     normalize_to_uint8_for_yolo, np_to_builtin,
@@ -333,6 +334,28 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
                 flush=True,
             )
 
+    # ── DPTV — Depth from Defocus estimator ──────────────────────
+    dptv_estimator: DPTVEstimator | None = None
+    dptv_config_dict: dict | None = None
+    if run_cfg.dptv_enabled:
+        dptv_cfg = DPTVConfig(
+            fiber_width_mm=run_cfg.dptv_fiber_width_mm,
+            fiber_length_mm=run_cfg.dptv_fiber_length_mm,
+            noise_width_px=run_cfg.dptv_noise_width_px,
+            k_blur_px_per_mm=run_cfg.dptv_k_blur_px_per_mm,
+        )
+        dptv_estimator = DPTVEstimator(dptv_cfg)
+        dptv_config_dict = dptv_estimator.to_dict()
+        calibrated = run_cfg.dptv_k_blur_px_per_mm is not None
+        print(
+            f"[PTV] DPTV habilitado — fibra {run_cfg.dptv_fiber_width_mm}mm × {run_cfg.dptv_fiber_length_mm}mm  "
+            f"noise={run_cfg.dptv_noise_width_px}px  "
+            f"k_blur={'%.3f' % run_cfg.dptv_k_blur_px_per_mm + ' px/mm' if calibrated else 'no calibrado (depth_mm=None)'}",
+            flush=True,
+        )
+    else:
+        print("[PTV] DPTV deshabilitado.", flush=True)
+
     # ── Detector y tracker ────────────────────────────────────────
     detector = FiberYOLODetector(
         weights_path  = run_cfg.weights_path,
@@ -397,6 +420,8 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
             frame_idx    = fi_orig,
             image_name   = img_path.name,
             next_det_id  = next_det_id,
+            dptv         = dptv_estimator,
+            px_per_mm    = px_per_mm,
         )
         all_detections.extend(detections)
 
@@ -436,6 +461,7 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
         tracks_filtered, fps=fps,
         temporal_regions=run_cfg.temporal_regions,
         path=run_cfg.out_dir / "tracks.json",
+        dptv_config=dptv_config_dict,
     )
 
 
@@ -463,11 +489,36 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
                 "n_frames":      n_in_region,
             })
 
+    # DPTV aggregate statistics across all filtered tracks
+    dptv_summary: dict = {"enabled": run_cfg.dptv_enabled}
+    if run_cfg.dptv_enabled and tracks_filtered:
+        from .dptv import _mean as _dptv_mean, _std as _dptv_std
+        all_records = [r for tr in tracks_filtered for r in tr.history]
+        dscores  = [r.defocus_score    for r in all_records]
+        blurs_mm = [r.depth_blur_mm    for r in all_records]
+        confs    = [r.depth_confidence for r in all_records]
+        depths   = [r.depth_mm for r in all_records if r.depth_mm is not None]
+
+        near_focus_count = sum(1 for s in dscores if s < 1.5)  # within 50% of ideal
+        dptv_summary.update({
+            "config":                dptv_config_dict,
+            "n_records_total":       len(all_records),
+            "n_depth_estimated":     len(depths),
+            "mean_defocus_score":    _dptv_mean(dscores),
+            "std_defocus_score":     _dptv_std(dscores),
+            "mean_blur_mm":          _dptv_mean(blurs_mm),
+            "mean_depth_confidence": _dptv_mean(confs),
+            "pct_near_focus":        100.0 * near_focus_count / len(dscores) if dscores else 0.0,
+            "mean_depth_mm":         _dptv_mean(depths) if depths else None,
+            "std_depth_mm":          _dptv_std(depths)  if depths else None,
+        })
+
     summary = {
         "meta":   raw_cfg.get("meta", {}),
         "camera": raw_cfg.get("camera", {}),
         "ptv":    raw_cfg.get("ptv", {}),
         "schedule": schedule_summary,
+        "dptv":   dptv_summary,
         "results": {
             "n_frames_scheduled":  len(schedule),
             "n_frames_processed":  len(frames_buffer),
@@ -476,10 +527,14 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
             "n_tracks_filtered":   len(tracks_filtered),
             "min_frames_keep":     run_cfg.min_frames_keep,
             "units": {
-                "position":     "mm",
-                "velocity":     "mm/s",
-                "acceleration": "mm/s2",
-                "angle":        "degrees",
+                "position":        "mm",
+                "velocity":        "mm/s",
+                "acceleration":    "mm/s2",
+                "angle":           "degrees",
+                "depth":           "mm",
+                "depth_blur":      "mm",
+                "defocus_score":   "dimensionless (1.0=in-focus)",
+                "depth_confidence":"dimensionless [0,1]",
             },
         },
     }
