@@ -12,6 +12,13 @@ Unidades de salida:
 
 El campo dt_s en TrackRecord almacena el Δt real usado para esa observación,
 lo que permite análisis correcto de trayectorias con timestep variable.
+
+Campos DPTV (Depth-from-Defocus PTV):
+- defocus_score   : W_aparente / W_ideal  (1.0 = en foco, >1 = desenfocado)
+- depth_blur_px   : contribución del blur de desenfoque en píxeles
+- depth_blur_mm   : blur de desenfoque en mm (proporcional a Δz)
+- depth_mm        : estimación de |Δz| desde el plano focal (None sin calibración)
+- depth_confidence: calidad de la estimación [0, 1]
 """
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
@@ -30,6 +37,13 @@ class Detection:
     area_px: float
     score: float
     bbox_xyxy: list[float]
+
+    # DPTV depth-from-defocus fields (populated by DPTVEstimator in detector.detect())
+    defocus_score:    float        = 1.0
+    depth_blur_px:    float        = 0.0
+    depth_blur_mm:    float        = 0.0
+    depth_mm:         float | None = None
+    depth_confidence: float        = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -91,6 +105,13 @@ class TrackRecord:
 
     det_id: int | None = None
 
+    # DPTV depth-from-defocus (copied from the matched Detection)
+    defocus_score:    float        = 1.0
+    depth_blur_px:    float        = 0.0
+    depth_blur_mm:    float        = 0.0
+    depth_mm:         float | None = None
+    depth_confidence: float        = 0.0
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -105,10 +126,12 @@ class Track:
     history: list[TrackRecord] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        from .dptv import DPTVEstimator
         return {
-            "track_id":  self.track_id,
-            "hits":      self.hits,
-            "misses":    self.misses,
-            "is_active": self.is_active,
-            "history":   [r.to_dict() for r in self.history],
+            "track_id":   self.track_id,
+            "hits":       self.hits,
+            "misses":     self.misses,
+            "is_active":  self.is_active,
+            "depth_stats": DPTVEstimator.track_depth_stats(self.history),
+            "history":    [r.to_dict() for r in self.history],
         }

@@ -1,5 +1,6 @@
 from .config import TrackingConfig, build_tracking_config, validate_config
 from .models import Detection, TrackState, TrackRecord, Track
+from .dptv import DPTVConfig, DPTVEstimator
 from .detector import FiberYOLODetector
 from .filters import predict_state_abg, update_state_abg
 from .tracker import Tracker
@@ -30,6 +31,7 @@ from .runner import run_ptv
 __all__ = [
     "TrackingConfig", "build_tracking_config", "validate_config",
     "Detection", "TrackState", "TrackRecord", "Track",
+    "DPTVConfig", "DPTVEstimator",
     "FiberYOLODetector",
     "predict_state_abg", "update_state_abg",
     "Tracker",

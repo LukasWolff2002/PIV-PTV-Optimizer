@@ -84,6 +84,13 @@ class TrackingConfig:
     # ── Guardar imágenes ─────────────────────────────────────────
     save_images: bool = True
 
+    # ── DPTV — Depth from Defocus PTV ────────────────────────────
+    dptv_enabled:          bool        = True
+    dptv_fiber_width_mm:   float       = 0.2
+    dptv_fiber_length_mm:  float       = 13.0
+    dptv_noise_width_px:   float       = 1.0
+    dptv_k_blur_px_per_mm: float | None = None  # None = uncalibrated
+
     @property
     def dt(self) -> float:
         """dt base (frames consecutivos). El runner lo sobreescribe por región."""
@@ -152,6 +159,11 @@ def build_tracking_config(cfg: dict) -> TrackingConfig:
         viz_tail_length=int(ptv.get("viz_tail_length", 0)),
         viz_update_every=int(ptv.get("viz_update_every", 1)),
         save_images=bool(ptv.get("save_images", True)),
+        dptv_enabled=bool(ptv.get("dptv_enabled", True)),
+        dptv_fiber_width_mm=float(ptv.get("dptv_fiber_width_mm", 0.2)),
+        dptv_fiber_length_mm=float(ptv.get("dptv_fiber_length_mm", 13.0)),
+        dptv_noise_width_px=float(ptv.get("dptv_noise_width_px", 1.0)),
+        dptv_k_blur_px_per_mm=ptv.get("dptv_k_blur_px_per_mm"),
     )
 
 

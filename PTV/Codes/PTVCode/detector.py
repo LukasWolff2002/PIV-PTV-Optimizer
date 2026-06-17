@@ -497,8 +497,26 @@ class FiberYOLODetector:
         frame_idx: int,
         image_name: str,
         next_det_id: int,
+        dptv=None,
+        px_per_mm: float | None = None,
     ) -> tuple[list[Detection], int]:
         if self._sahi_available:
-            return self._detect_sahi(image_rgb_u8, frame_idx, image_name, next_det_id)
+            detections, next_det_id = self._detect_sahi(
+                image_rgb_u8, frame_idx, image_name, next_det_id
+            )
         else:
-            return self._detect_direct(image_rgb_u8, frame_idx, image_name, next_det_id)
+            detections, next_det_id = self._detect_direct(
+                image_rgb_u8, frame_idx, image_name, next_det_id
+            )
+
+        # DPTV: estimate depth from defocus blur on each detection
+        if dptv is not None and px_per_mm is not None:
+            for det in detections:
+                info = dptv.estimate(det.width_px, px_per_mm)
+                det.defocus_score    = info["defocus_score"]
+                det.depth_blur_px   = info["blur_px"]
+                det.depth_blur_mm   = info["blur_mm"]
+                det.depth_mm        = info["depth_mm"]
+                det.depth_confidence = info["depth_confidence"]
+
+        return detections, next_det_id

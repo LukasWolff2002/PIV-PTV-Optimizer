@@ -452,6 +452,12 @@ def write_cfg(
             "viz_tail_length":  ptv_vars.VIZ_TAIL_LENGTH,
             "viz_update_every": ptv_vars.VIZ_UPDATE_EVERY,
             "save_images":      ptv_vars.SAVE_IMAGES,
+            # DPTV — Depth from Defocus
+            "dptv_enabled":          ptv_vars.DPTV_ENABLED,
+            "dptv_fiber_width_mm":   ptv_vars.FIBER_WIDTH_MM,
+            "dptv_fiber_length_mm":  ptv_vars.FIBER_LENGTH_MM,
+            "dptv_noise_width_px":   ptv_vars.DPTV_NOISE_WIDTH_PX,
+            "dptv_k_blur_px_per_mm": ptv_vars.DPTV_K_BLUR_PX_PER_MM,
         },
 
         # ── Cleanup ───────────────────────────────────────────────

@@ -30,6 +30,9 @@ def export_detections_csv(detections: list[Detection], path: Path) -> None:
             "cx_px", "cy_px", "angle_deg",
             "length_px", "width_px", "area_px", "score",
             "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2",
+            # DPTV depth columns
+            "defocus_score", "depth_blur_px", "depth_blur_mm",
+            "depth_mm", "depth_confidence",
         ])
         for d in detections:
             x1, y1, x2, y2 = d.bbox_xyxy
@@ -38,6 +41,11 @@ def export_detections_csv(detections: list[Detection], path: Path) -> None:
                 d.cx, d.cy, d.angle_deg,
                 d.length_px, d.width_px, d.area_px, d.score,
                 x1, y1, x2, y2,
+                f"{d.defocus_score:.4f}",
+                f"{d.depth_blur_px:.4f}",
+                f"{d.depth_blur_mm:.4f}",
+                f"{d.depth_mm:.4f}" if d.depth_mm is not None else "",
+                f"{d.depth_confidence:.4f}",
             ])
 
 
@@ -59,6 +67,9 @@ def export_tracks_csv(
             "angle_deg", "omega_deg_s", "alpha_ang_deg_s2",
             "length_mm", "width_mm",
             "det_id",
+            # DPTV depth columns
+            "defocus_score", "depth_blur_px", "depth_blur_mm",
+            "depth_mm", "depth_confidence",
         ])
         for tr in tracks:
             for rec in tr.history:
@@ -82,6 +93,11 @@ def export_tracks_csv(
                     f"{rec.length_mm:.4f}",
                     f"{rec.width_mm:.4f}",
                     rec.det_id,
+                    f"{rec.defocus_score:.4f}",
+                    f"{rec.depth_blur_px:.4f}",
+                    f"{rec.depth_blur_mm:.4f}",
+                    f"{rec.depth_mm:.4f}" if rec.depth_mm is not None else "",
+                    f"{rec.depth_confidence:.4f}",
                 ])
 
 
@@ -90,20 +106,26 @@ def export_tracks_json(
     fps: float,
     temporal_regions: list | None,
     path: Path,
+    dptv_config: dict | None = None,
 ) -> None:
     data = {
         "metadata": {
             "fps": fps,
             "units": {
-                "position":     "mm",
-                "velocity":     "mm/s",
-                "acceleration": "mm/s2",
-                "angle":        "degrees",
-                "length":       "mm",
-                "width":        "mm",
-                "time":         "seconds",
+                "position":        "mm",
+                "velocity":        "mm/s",
+                "acceleration":    "mm/s2",
+                "angle":           "degrees",
+                "length":          "mm",
+                "width":           "mm",
+                "time":            "seconds",
+                "depth_blur":      "mm",
+                "depth":           "mm",
+                "defocus_score":   "dimensionless (1.0=in-focus)",
+                "depth_confidence":"dimensionless [0,1]",
             },
             "temporal_regions": temporal_regions or [],
+            "dptv": dptv_config or {"enabled": False},
         },
         "tracks": [tr.to_dict() for tr in tracks],
     }

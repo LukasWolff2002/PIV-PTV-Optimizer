@@ -368,6 +368,11 @@ class Tracker:
             width_mm=state.width_px / mm,
             dt_s=dt_s,
             det_id=det.det_id,
+            defocus_score=det.defocus_score,
+            depth_blur_px=det.depth_blur_px,
+            depth_blur_mm=det.depth_blur_mm,
+            depth_mm=det.depth_mm,
+            depth_confidence=det.depth_confidence,
         )
 
     def _new_track(
