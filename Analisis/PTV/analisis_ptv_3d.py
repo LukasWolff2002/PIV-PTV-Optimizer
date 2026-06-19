@@ -65,6 +65,11 @@ MAX_PLOTLY_FRAMES = 120
 # Submuestreo para MP4
 ANIM_FRAME_STEP_3D = 4
 
+# Velocidad de reproducción por defecto relativa al tiempo real.
+# 1.0 = tiempo real, 2.0 = el doble de rápido, 0.5 = la mitad de rápido.
+# Los botones de velocidad en el HTML permiten cambiarla en tiempo de ejecución.
+PLAYBACK_SPEED = 1.0
+
 # Segundos de trayectoria pasada mostrada como estela
 TRAIL_S = 0.4
 
@@ -457,6 +462,13 @@ def build_plotly_animation(
     n_frames = min(MAX_PLOTLY_FRAMES, len(t_grid))
     frame_indices = np.linspace(0, len(t_grid) - 1, n_frames, dtype=int)
 
+    # Duración base por frame (ms) para reproducción a tiempo real.
+    # Cada frame plotly cubre (t_max-t_min)/(n_frames-1) segundos.
+    t_span = float(t_grid[-1] - t_grid[0])
+    frame_real_ms = (t_span / max(1, n_frames - 1)) * 1000.0
+    # Duración inicial según PLAYBACK_SPEED; mínimo 16 ms (≈60 fps browser limit)
+    default_dur_ms = max(16, int(frame_real_ms / PLAYBACK_SPEED))
+
     print(f"[3D] Construyendo {n_frames} frames plotly...", flush=True)
 
     # Plano PIV estático
@@ -512,18 +524,19 @@ def build_plotly_animation(
             ),
         ),
         updatemenus=[
+            # ── Fila 1: Play / Pausa ─────────────────────────────────
             dict(
                 type="buttons",
                 direction="left",
                 x=0.0, xanchor="left",
-                y=-0.08, yanchor="top",
-                pad=dict(r=10, t=10),
+                y=-0.06, yanchor="top",
+                pad=dict(r=10, t=5),
                 buttons=[
                     dict(
                         label="▶ Play",
                         method="animate",
                         args=[None, {
-                            "frame": {"duration": 50, "redraw": True},
+                            "frame": {"duration": default_dur_ms, "redraw": True},
                             "fromcurrent": True,
                             "transition": {"duration": 0},
                         }],
@@ -539,12 +552,45 @@ def build_plotly_animation(
                     ),
                 ],
                 showactive=True,
-            )
+            ),
+            # ── Fila 2: control de velocidad ─────────────────────────
+            # Cada botón reproduce desde el frame actual a esa velocidad.
+            # frame_real_ms es la duración de un frame a tiempo real.
+            dict(
+                type="buttons",
+                direction="left",
+                x=0.0, xanchor="left",
+                y=-0.14, yanchor="top",
+                pad=dict(r=6, t=5),
+                buttons=[
+                    dict(
+                        label=label,
+                        method="animate",
+                        args=[None, {
+                            "frame": {
+                                "duration": max(16, int(frame_real_ms / mult)),
+                                "redraw": True,
+                            },
+                            "fromcurrent": True,
+                            "transition": {"duration": 0},
+                        }],
+                    )
+                    for label, mult in [
+                        ("×¼",  0.25),
+                        ("×½",  0.5),
+                        ("×1",  1.0),
+                        ("×2",  2.0),
+                        ("×4",  4.0),
+                        ("×8",  8.0),
+                    ]
+                ],
+                showactive=True,
+            ),
         ],
         sliders=[dict(
             active=0,
             yanchor="top", xanchor="left",
-            x=0.0, y=-0.02,
+            x=0.0, y=0.0,
             pad=dict(b=10, t=50),
             len=1.0,
             currentvalue=dict(
@@ -568,7 +614,7 @@ def build_plotly_animation(
                 for f in frames
             ],
         )],
-        margin=dict(l=0, r=0, t=80, b=120),
+        margin=dict(l=0, r=0, t=80, b=180),
         height=700,
     )
 
