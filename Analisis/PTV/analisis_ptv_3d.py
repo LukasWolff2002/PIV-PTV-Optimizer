@@ -73,6 +73,17 @@ PLAYBACK_SPEED = 1.0
 # Segundos de trayectoria pasada mostrada como estela
 TRAIL_S = 0.4
 
+# Suavizado del eje Z (profundidad) por track.
+# depth_blur_mm es ruidoso frame a frame porque el ancho de la fibra medido
+# varía por ruido de imagen, no por cambio real de profundidad.
+# DEPTH_SMOOTH_HALF_WIN = mitad de la ventana de media móvil en pasos de la grilla.
+# Window total = 2*N+1 pasos. A 220 fps con skip=4, cada paso ≈ 18 ms.
+#   10 → ventana ~360 ms   (suavizado ligero)
+#   20 → ventana ~720 ms   (recomendado — elimina saltos sin borrar tendencia)
+#   40 → ventana ~1.4 s    (muy agresivo — solo tendencia lenta)
+# Poner en 0 para deshabilitar el suavizado.
+DEPTH_SMOOTH_HALF_WIN = 20
+
 # Qué usar como eje Z: "blur" (depth_blur_mm) o "depth" (depth_mm calibrado)
 # Si usas "depth" pero el pipeline no está calibrado, se cae a "blur" automáticamente
 Z_MODE = "blur"
@@ -247,6 +258,56 @@ def compute_extent(per_track: dict[int, list[dict]]) -> list[float]:
     mx = (xmax - xmin) * 0.03
     my = (ymax - ymin) * 0.03
     return [xmin - mx, xmax + mx, ymin - my, ymax + my]
+
+
+def smooth_depth_z(
+    interp: dict[int, dict[str, np.ndarray]],
+    half_win: int,
+) -> None:
+    """
+    Suaviza in-place el campo 'z' (y 'depth_blur_mm') de cada track con
+    una media móvil de ventana (2*half_win + 1) pasos.
+
+    depth_blur_mm es inherentemente ruidoso: el ancho medido de una fibra
+    varía frame a frame por ruido de imagen aunque la fibra no se mueva en
+    profundidad.  Las fibras en fluidos viscosos cambian de profundidad
+    lentamente (inercia alta), así que este suavizado es físicamente válido.
+    """
+    if half_win <= 0:
+        return
+    n_kernel = 2 * half_win + 1
+    kernel   = np.ones(n_kernel) / n_kernel
+
+    for arrays in interp.values():
+        for field in ("z", "depth_blur_mm"):
+            if field not in arrays:
+                continue
+            arr  = arrays[field]
+            mask = np.isfinite(arr)
+            if not mask.any():
+                continue
+            idx     = np.where(mask)[0]
+            segment = arr[idx].copy()
+            seg_len = len(segment)
+
+            if seg_len < 3:
+                continue
+
+            if seg_len < n_kernel:
+                hw   = (seg_len - 1) // 2
+                kern = np.ones(2 * hw + 1) / (2 * hw + 1)
+            else:
+                hw   = half_win
+                kern = kernel
+
+            smoothed = np.convolve(segment, kern, mode="same")
+            k_eff = len(kern)
+            for i in range(min(hw, len(smoothed))):
+                smoothed[i] *= k_eff / (i + hw + 1)
+            for i in range(1, min(hw + 1, len(smoothed))):
+                smoothed[-i] *= k_eff / (i + hw)
+
+            arr[idx] = smoothed
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -866,6 +927,14 @@ def main() -> None:
 
             # Grilla temporal e interpolación
             t_grid, interp = interpolate_tracks_3d(per_track, schedule, z_mode_eff)
+
+            # Suavizar eje Z para eliminar ruido de detección frame a frame
+            if DEPTH_SMOOTH_HALF_WIN > 0:
+                smooth_depth_z(interp, DEPTH_SMOOTH_HALF_WIN)
+                dt_grid = float(np.diff(t_grid[:2])[0]) if len(t_grid) > 1 else 0.001
+                win_s = DEPTH_SMOOTH_HALF_WIN * 2 * dt_grid
+                print(f"[3D] Suavizado Z: ventana={2*DEPTH_SMOOTH_HALF_WIN+1} pasos "
+                      f"(≈{win_s*1000:.0f} ms)", flush=True)
 
             if GEN_PLOTLY_HTML:
                 build_plotly_animation(
