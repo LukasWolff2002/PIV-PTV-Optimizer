@@ -25,8 +25,8 @@ Uso rápido:
 Cómo calibrar k_blur con un experimento
 -----------------------------------------
 1. Colocar una fibra exactamente en el plano focal de la cámara (z = 0 mm).
-   Medir el ancho aparente promedio → ese es W_ideal_px para esa cámara.
-   Ej: W_ideal_px = 6.0 → --w-ideal-px 6.0
+   Medir el ancho aparente promedio -> ese es W_ideal_px para esa cámara.
+   Ej: W_ideal_px = 6.0 -> --w-ideal-px 6.0
 
 2. Colocar fibras a profundidades conocidas (z = 5, 10, 15, 20, 30 mm).
    Para cada z_i, medir width_px medio en las detecciones:
@@ -49,7 +49,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-# ── Rutas ─────────────────────────────────────────────────────────────────────
+# -- Rutas --------------------------------------------------------------------─
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR  = PROJECT_ROOT / "ResultadosPTV" / "ResultadosPTV"
 
@@ -58,7 +58,7 @@ NEAR_FOCUS_DEFOCUS_THR = 1.5
 NEAR_FOCUS_CONF_THR    = 0.5
 
 
-# ── Fórmulas DPTV (idénticas a dptv.py) ──────────────────────────────────────
+# -- Fórmulas DPTV (idénticas a dptv.py) --------------------------------------
 
 def _dptv_estimate(
     width_px:     float,
@@ -96,7 +96,7 @@ def _std(vals):
     return math.sqrt(sum((v - m) ** 2 for v in vals) / (len(vals) - 1))
 
 
-# ── Lectura de configuración de carpeta ──────────────────────────────────────
+# -- Lectura de configuración de carpeta --------------------------------------
 
 def _load_folder_meta(folder: Path) -> Optional[dict]:
     """Lee summary.json y retorna (cam, px_per_mm, fiber_width_mm, noise_px)."""
@@ -113,7 +113,7 @@ def _load_folder_meta(folder: Path) -> Optional[dict]:
     }
 
 
-# ── Backup ────────────────────────────────────────────────────────────────────
+# -- Backup --------------------------------------------------------------------
 
 def _backup(folder: Path, filenames: list[str]) -> Path:
     backup_dir = folder / f"_backup_dptv_{date.today().isoformat()}"
@@ -125,7 +125,7 @@ def _backup(folder: Path, filenames: list[str]) -> Path:
     return backup_dir
 
 
-# ── Actualización de archivos ─────────────────────────────────────────────────
+# -- Actualización de archivos ------------------------------------------------─
 
 def _update_detections_csv(
     folder: Path, px_per_mm: float, w_ideal_px: float,
@@ -337,7 +337,7 @@ def _update_summary_json(
             json.dump(s, f, indent=2, ensure_ascii=False, allow_nan=False)
 
 
-# ── Procesamiento de una carpeta ──────────────────────────────────────────────
+# -- Procesamiento de una carpeta ----------------------------------------------
 
 def process_folder(
     folder: Path,
@@ -369,7 +369,7 @@ def process_folder(
 
     if not no_backup and not dry_run:
         bd = _backup(folder, ["detections.csv", "tracks.csv", "tracks.json", "summary.json"])
-        print(f"  Backup → {bd.name}/")
+        print(f"  Backup -> {bd.name}/")
 
     det_results = _update_detections_csv(
         folder, px_per_mm, w_ideal_px, k_blur, noise_px, dry_run)
@@ -391,7 +391,7 @@ def process_folder(
         depth_vals = [r["depth_mm"] for r in det_results if r["depth_mm"] is not None]
         mean_d = _mean(depth_vals)
         pct_d  = 100.0 * len(depth_vals) / len(det_results)
-        print(f"  → {len(det_results)} dets | depth estimado: {pct_d:.0f}% "
+        print(f"  -> {len(det_results)} dets | depth estimado: {pct_d:.0f}% "
               + (f"| mean_depth={mean_d:.1f}mm" if mean_d else ""))
 
     action = "[DRY-RUN] no se modificaron archivos" if dry_run else "Archivos actualizados."
@@ -399,7 +399,7 @@ def process_folder(
     return True
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# -- CLI ----------------------------------------------------------------------─
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -463,7 +463,7 @@ def main() -> None:
 
     ok = 0
     for folder in folders:
-        print(f"── {folder.name}")
+        print(f"-- {folder.name}")
         success = process_folder(
             folder        = folder,
             k_blur_by_cam = k_blur_by_cam,
