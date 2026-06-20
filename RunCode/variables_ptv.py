@@ -325,15 +325,17 @@ FIBER_WIDTH_MM  = 0.2
 #   blur_px  = sqrt(W_apparent² - W_ideal²)  (defocus contribution)
 #   depth_mm = blur_px / DPTV_K_BLUR_PX_PER_MM  (|Δz| from focal plane)
 #
-# DPTV_K_BLUR_PX_PER_MM: calibrate by placing fibers at known depths and
-#   measuring the increase in apparent width. Set to None to output only
-#   defocus_score and blur_mm without depth_mm.
+# DPTV_K_BLUR_PX_PER_MM: geometric estimate from cam-1 data + beam 62 mm.
+#   Beam half-depth = 31 mm; assuming uniform fiber distribution → E[depth] = 15.5 mm.
+#   Empirical mean_blur_px ≈ 31-38 px → k_blur ≈ 2.0-2.5 px/mm → using 2.5.
+#   Each camera has its own optics; recalibrate per camera with fibers at known
+#   depths (see Calibracion/calibracion_dptv.py). Set to None = uncalibrated.
 #
 # DPTV_NOISE_WIDTH_PX: PCA width measurement noise (≈1-2 px for 0.2 mm fibers).
 #   Governs depth_confidence: tanh(blur_px / noise_px).
 DPTV_ENABLED          = True
 DPTV_NOISE_WIDTH_PX   = 1.0   # expected PCA width noise in pixels
-DPTV_K_BLUR_PX_PER_MM = None  # px/mm depth — needs calibration; None = uncalibrated
+DPTV_K_BLUR_PX_PER_MM = 2.5   # px/mm — geometric estimate, cam-1 + beam 62mm (see Calibracion/calibracion_dptv.py)
 
 FEAT_WEIGHTS = (1.5, 1.5, 1.0, 2.0, 2.0)
 
