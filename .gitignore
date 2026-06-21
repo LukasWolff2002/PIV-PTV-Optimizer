@@ -12,3 +12,7 @@ pipeline_config.json
 fotos_random/
 PTVPreprocesadas/
 ResultadosPTVFiltrado/
+
+# Excepciones - mantener archivos README
+!ResultadosPIV/README.md
+!ResultadosPTV/README.md
