@@ -91,7 +91,7 @@
 
 %Article title, type and left-column content
 
-\newcommand{\articletype}[1]{{\vspace*{-8mm}\noindent \Large \sf International Journal on Document Analysis and Recognition (IJDAR)}
+\newcommand{\articletype}[1]{{\vspace*{-8mm}\noindent \Large \sf \textcolor{red}{PONER REVISTA}}
 
 \vspace*{8mm} \noindent\reversemarginpar
 \marginpar{\vspace{-3mm} {\color{gray}\hrule} \ \\ Crossmark\\ {\color{gray}\hrule} \ \\ \tiny {\sf RECEIVED} {\small \\ dd Month yyyy}\\ \\ {\sf REVISED} {\small \\ dd Month yyyy}}{\scriptsize \sf{\bfseries \MakeUppercase{#1}}}}
