@@ -331,10 +331,19 @@ FIBER_WIDTH_MM  = 0.2
 #   Each camera has its own optics; recalibrate per camera with fibers at known
 #   depths (see Calibracion/calibracion_dptv.py). Set to None = uncalibrated.
 #
-# DPTV_NOISE_WIDTH_PX: PCA width measurement noise (≈1-2 px for 0.2 mm fibers).
-#   Governs depth_confidence: tanh(blur_px / noise_px).
+# DPTV_NOISE_WIDTH_PX: PCA width measurement noise, measured empirically as the
+#   intra-track std of width_px across frames of the same fiber (589 tracks, cam-1).
+#   median = 6.8 px — much larger than the theoretical 1 px due to YOLO+PCA variance.
+#   Governs depth_confidence: tanh(blur_px / noise_px). With noise=1 px all
+#   confidences were ~1.0; with 6.8 px near-focus fibers get honest low confidence.
+#
+# DPTV_W_IDEAL_PX: optical in-focus width (p1 of detected width distribution).
+#   Physical fiber is 0.2 mm -> 1.6 px at 8 px/mm, but the optical system + YOLO
+#   cannot resolve below ~6 px. Using the empirical p1 = 6.1 px gives depth=0 for
+#   the most in-focus fibers. Difference in k_blur is only 1.8 % vs theoretical.
 DPTV_ENABLED          = True
-DPTV_NOISE_WIDTH_PX   = 1.0   # expected PCA width noise in pixels
+DPTV_NOISE_WIDTH_PX   = 6.8   # px — empirical intra-track std (was 1.0, see Calibracion/analisis_flujo_dptv.py)
+DPTV_W_IDEAL_PX       = 6.1   # px — empirical optical focus width p1 (was fiber_width_mm*px_per_mm=1.6 px)
 DPTV_K_BLUR_PX_PER_MM = 2.5   # px/mm — geometric estimate, cam-1 + beam 62mm (see Calibracion/calibracion_dptv.py)
 
 FEAT_WEIGHTS = (1.5, 1.5, 1.0, 2.0, 2.0)

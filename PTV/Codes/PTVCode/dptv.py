@@ -9,7 +9,7 @@ Physical model (thin-lens, paraxial):
     W_apparent² = W_ideal² + (k_blur × Δz)²
 
     W_apparent [px] : measured fiber width from YOLO segmentation + PCA
-    W_ideal    [px] : fiber_width_mm × px_per_mm  (expected in-focus width)
+    W_ideal    [px] : w_ideal_px if set, else fiber_width_mm × px_per_mm
     k_blur [px/mm]  : blur growth rate — calibrated from known-depth images
     Δz     [mm]     : depth offset from focal plane (magnitude, always ≥ 0)
 
@@ -76,6 +76,7 @@ class DPTVConfig:
     fiber_length_mm:  float        = 13.0
     noise_width_px:   float        = 1.0
     k_blur_px_per_mm: float | None = None
+    w_ideal_px:       float | None = None  # override: empirical optical in-focus width [px]
 
 
 # ─────────────────────────────────────────────
@@ -112,7 +113,9 @@ class DPTVEstimator:
             depth_mm         — |Δz| from focal plane [mm] or None if uncalibrated
             depth_confidence — quality of the depth estimate [0, 1]
         """
-        W_ideal_px = self.cfg.fiber_width_mm * px_per_mm
+        W_ideal_px = (self.cfg.w_ideal_px
+                      if self.cfg.w_ideal_px is not None and self.cfg.w_ideal_px > 0
+                      else self.cfg.fiber_width_mm * px_per_mm)
 
         if W_ideal_px <= 0:
             return _null_result()
@@ -185,11 +188,13 @@ class DPTVEstimator:
     @classmethod
     def from_dict(cls, d: dict) -> "DPTVEstimator":
         """Build from a plain dict (e.g. parsed from pipeline_config.json)."""
+        w_ideal = d.get("w_ideal_px")
         cfg = DPTVConfig(
             fiber_width_mm=float(d.get("fiber_width_mm", 0.2)),
             fiber_length_mm=float(d.get("fiber_length_mm", 13.0)),
             noise_width_px=float(d.get("noise_width_px", 1.0)),
             k_blur_px_per_mm=d.get("k_blur_px_per_mm"),
+            w_ideal_px=float(w_ideal) if w_ideal is not None else None,
         )
         return cls(cfg)
 
@@ -201,6 +206,7 @@ class DPTVEstimator:
             "fiber_length_mm":   self.cfg.fiber_length_mm,
             "noise_width_px":    self.cfg.noise_width_px,
             "k_blur_px_per_mm":  self.cfg.k_blur_px_per_mm,
+            "w_ideal_px":        self.cfg.w_ideal_px,
             "depth_calibrated":  self.cfg.k_blur_px_per_mm is not None,
         }
 

@@ -90,6 +90,7 @@ class TrackingConfig:
     dptv_fiber_length_mm:  float       = 13.0
     dptv_noise_width_px:   float       = 1.0
     dptv_k_blur_px_per_mm: float | None = None  # None = uncalibrated
+    dptv_w_ideal_px:       float | None = None  # empirical optical focus width override [px]
 
     @property
     def dt(self) -> float:
@@ -164,6 +165,7 @@ def build_tracking_config(cfg: dict) -> TrackingConfig:
         dptv_fiber_length_mm=float(ptv.get("dptv_fiber_length_mm", 13.0)),
         dptv_noise_width_px=float(ptv.get("dptv_noise_width_px", 1.0)),
         dptv_k_blur_px_per_mm=ptv.get("dptv_k_blur_px_per_mm"),
+        dptv_w_ideal_px=float(ptv["dptv_w_ideal_px"]) if ptv.get("dptv_w_ideal_px") is not None else None,
     )
 
 

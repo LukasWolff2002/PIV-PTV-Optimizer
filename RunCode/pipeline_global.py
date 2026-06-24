@@ -457,6 +457,7 @@ def write_cfg(
             "dptv_fiber_width_mm":   ptv_vars.FIBER_WIDTH_MM,
             "dptv_fiber_length_mm":  ptv_vars.FIBER_LENGTH_MM,
             "dptv_noise_width_px":   ptv_vars.DPTV_NOISE_WIDTH_PX,
+            "dptv_w_ideal_px":       ptv_vars.DPTV_W_IDEAL_PX,
             "dptv_k_blur_px_per_mm": ptv_vars.DPTV_K_BLUR_PX_PER_MM,
         },
 

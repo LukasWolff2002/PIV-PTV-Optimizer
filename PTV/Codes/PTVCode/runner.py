@@ -343,6 +343,7 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
             fiber_length_mm=run_cfg.dptv_fiber_length_mm,
             noise_width_px=run_cfg.dptv_noise_width_px,
             k_blur_px_per_mm=run_cfg.dptv_k_blur_px_per_mm,
+            w_ideal_px=run_cfg.dptv_w_ideal_px,
         )
         dptv_estimator = DPTVEstimator(dptv_cfg)
         dptv_config_dict = dptv_estimator.to_dict()
