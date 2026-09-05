@@ -28,6 +28,7 @@ CONDA_BAT_OPTIONS = [
     Path(r"C:\Users\SarumanPM\anaconda3\condabin\conda.bat"),
     Path(r"C:\Users\MBX\anaconda3\condabin\conda.bat"),
     Path(r"C:\Users\lkwol\anaconda3\condabin\conda.bat"),
+    Path(r"C:\Users\Legolas\anaconda3\condabin\conda.bat")
 ]
 CONDA_BAT = next((str(p) for p in CONDA_BAT_OPTIONS if p.exists()), None)
 
