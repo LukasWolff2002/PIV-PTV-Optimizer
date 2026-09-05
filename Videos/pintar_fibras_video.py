@@ -23,7 +23,8 @@ Que hace, punto por punto:
      usa el muestreo adaptativo del tracker: 1 s grabado dura 1 s en el video.
   5. Detecta las fibras en cada frame muestreado, descarta las que caen en la
      zona enmascarada (mascara fija, convencion blanco=ignorar, filtro por
-     centroide como el tracker) y pinta su silueta con COLOR_FIBRA_HEX.
+     centroide como el tracker) y pinta cada fibra con COLOR_FIBRA_HEX, ya sea
+     como LINEA estimada por PCA (MODO_PINTURA="linea") o como la silueta YOLO.
   6. Escribe el .mp4 en la carpeta de salida.
 
 IMPORTANTE — entorno:
@@ -36,6 +37,7 @@ IMPORTANTE — entorno:
 from __future__ import annotations
 
 import csv
+import math
 import sys
 import urllib.request
 from io import StringIO
@@ -49,7 +51,16 @@ import cv2
 # ----------------------------------------------------------------------------
 
 COLOR_FIBRA_HEX = "#5e6ca2"   # color con el que se pintan las fibras
-ALPHA_PINTURA   = 1.0         # 1.0 = relleno solido; <1.0 = semitransparente
+ALPHA_PINTURA   = 1.0         # 1.0 = opaco; <1.0 = semitransparente (ambos modos)
+
+# Que se pinta por fibra:
+#   "linea"   -> la fibra estimada como una LINEA: centroide + angulo + largo por
+#                PCA sobre la sombra, calculada con la ruta COMPLETA del PTV
+#                (SAHI + NMS + PCA via det.detect). Es la geometria que usa el PTV.
+#   "silueta" -> toda la sombra segmentada por YOLO (relleno del contorno crudo).
+MODO_PINTURA   = "linea"
+GROSOR_LINEA   = 2            # grosor de la linea en px (modo "linea")
+DIBUJAR_CENTRO = False        # dibujar un punto en el centroide de cada fibra
 
 FPS_SALIDA = 30.0             # fps del video final (velocidad real preservada)
 
@@ -389,13 +400,32 @@ def a_dims_pares(frame: np.ndarray) -> np.ndarray:
 
 
 # ----------------------------------------------------------------------------
-# DETECCION DE FIBRAS  (reutiliza el pipeline real: YOLO-seg + SAHI)
+# DETECCION DE FIBRAS
 # ----------------------------------------------------------------------------
+# Los dos modos usan el MISMO detector del pipeline: mismo upsampling (x scale)
+# y los mismos parches solapados SAHI, con los parametros de variables_ptv.
+#   - "linea"  : det.detect(...) -> Detection por fibra con centroide, angulo y
+#                largo estimados por PCA (con NMS entre parches). Es exactamente
+#                la geometria que calcula el PTV a partir de la sombra.
+#   - "silueta": se rasteriza el contorno crudo de YOLO (la sombra completa).
+
+def detectar_fibras_pca(det: FiberYOLODetector, rgb_u8: np.ndarray) -> list:
+    """Ruta COMPLETA del pipeline (SAHI + NMS + PCA). Devuelve list[Detection]."""
+    detections, _ = det.detect(
+        image_rgb_u8 = rgb_u8,
+        frame_idx    = 0,
+        image_name   = "frame",
+        next_det_id  = 1,
+        dptv         = None,     # sin profundidad
+        px_per_mm    = None,
+    )
+    return detections
+
 
 def detectar_poligonos_fibra(det: FiberYOLODetector, rgb_u8: np.ndarray) -> list[np.ndarray]:
     """
-    Corre exactamente la deteccion del pipeline (upscale -> tiles SAHI -> YOLO-seg)
-    y devuelve los poligonos de cada fibra en coordenadas de la imagen ORIGINAL.
+    Poligonos crudos de YOLO (la sombra) en coordenadas de la imagen ORIGINAL.
+    Mismo upscale + tiles SAHI que el pipeline. Usado por el modo "silueta".
     """
     img_bgr_up = det._upscale_to_bgr(rgb_u8)
     tiles, offsets = det._slice_views(img_bgr_up)
@@ -426,39 +456,80 @@ def detectar_poligonos_fibra(det: FiberYOLODetector, rgb_u8: np.ndarray) -> list
     return polys
 
 
-def pintar_fibras(fondo_rgb: np.ndarray, polys: list[np.ndarray],
-                  keep_mask: np.ndarray | None) -> int:
-    """Pinta la silueta de cada fibra sobre fondo_rgb. Devuelve cuantas pinto."""
-    H, W = fondo_rgb.shape[:2]
+# ----------------------------------------------------------------------------
+# PINTURA
+# ----------------------------------------------------------------------------
+
+def _centroide_valido(cx: float, cy: float, keep_mask, H: int, W: int) -> bool:
+    """True si el centroide cae en zona valida (misma logica que tracker._det_in_mask)."""
+    if keep_mask is None:
+        return True
+    xi = min(max(int(round(cx)), 0), W - 1)
+    yi = min(max(int(round(cy)), 0), H - 1)
+    return bool(keep_mask[yi, xi])
+
+
+def _capa_lineas(detections: list, keep_mask, H: int, W: int) -> tuple[np.ndarray, int]:
+    """Dibuja cada fibra como una linea: centroide + angulo + largo (PCA)."""
+    capa = np.zeros((H, W), dtype=np.uint8)
+    n = 0
+    for d in detections:
+        if not _centroide_valido(d.cx, d.cy, keep_mask, H, W):
+            continue
+        half = d.length_px / 2.0
+        ang  = math.radians(d.angle_deg)
+        dx, dy = math.cos(ang) * half, math.sin(ang) * half
+        p1 = (int(round(d.cx - dx)), int(round(d.cy - dy)))
+        p2 = (int(round(d.cx + dx)), int(round(d.cy + dy)))
+        cv2.line(capa, p1, p2, 255, GROSOR_LINEA, lineType=cv2.LINE_AA)
+        if DIBUJAR_CENTRO:
+            cv2.circle(capa, (int(round(d.cx)), int(round(d.cy))),
+                       max(2, GROSOR_LINEA), 255, -1, lineType=cv2.LINE_AA)
+        n += 1
+    return capa, n
+
+
+def _capa_siluetas(polys: list[np.ndarray], keep_mask, H: int, W: int) -> tuple[np.ndarray, int]:
+    """Rellena la sombra segmentada de cada fibra (contorno crudo de YOLO)."""
     capa = np.zeros((H, W), dtype=np.uint8)
     n = 0
     for poly in polys:
         pts = np.round(poly).astype(np.int32).reshape(-1, 1, 2)
         if len(pts) < 3:
             continue
-        # Centroide de la deteccion -> filtro por mascara (como el tracker)
-        if keep_mask is not None:
-            M = cv2.moments(pts)
-            if abs(M["m00"]) > 1e-9:
-                cx, cy = M["m10"] / M["m00"], M["m01"] / M["m00"]
-            else:
-                cx, cy = float(poly[:, 0].mean()), float(poly[:, 1].mean())
-            xi = min(max(int(round(cx)), 0), W - 1)
-            yi = min(max(int(round(cy)), 0), H - 1)
-            if not keep_mask[yi, xi]:
-                continue
+        M = cv2.moments(pts)
+        if abs(M["m00"]) > 1e-9:
+            cx, cy = M["m10"] / M["m00"], M["m01"] / M["m00"]
+        else:
+            cx, cy = float(poly[:, 0].mean()), float(poly[:, 1].mean())
+        if not _centroide_valido(cx, cy, keep_mask, H, W):
+            continue
         cv2.fillPoly(capa, [pts], 255)
         n += 1
+    return capa, n
 
-    m = capa.astype(bool)
+
+def _aplicar_capa(fondo_rgb: np.ndarray, capa_u8: np.ndarray) -> None:
+    """Mezcla COLOR_FIBRA sobre fondo_rgb segun cobertura (capa) y ALPHA_PINTURA."""
+    m = capa_u8 > 0
     if not m.any():
-        return n
+        return
+    cov = (capa_u8[m].astype(np.float32) / 255.0) * float(ALPHA_PINTURA)  # (K,)
+    cov = cov[:, None]
     color = np.array(COLOR_FIBRA_RGB, dtype=np.float32)
-    if ALPHA_PINTURA >= 1.0:
-        fondo_rgb[m] = COLOR_FIBRA_RGB
+    fondo_rgb[m] = (fondo_rgb[m].astype(np.float32) * (1.0 - cov)
+                    + color * cov).astype(np.uint8)
+
+
+def pintar_fibras(det: FiberYOLODetector, rgb_det: np.ndarray,
+                  fondo_rgb: np.ndarray, keep_mask) -> int:
+    """Detecta segun MODO_PINTURA y pinta sobre fondo_rgb. Devuelve cuantas pinto."""
+    H, W = fondo_rgb.shape[:2]
+    if MODO_PINTURA == "linea":
+        capa, n = _capa_lineas(detectar_fibras_pca(det, rgb_det), keep_mask, H, W)
     else:
-        fondo_rgb[m] = (fondo_rgb[m].astype(np.float32) * (1.0 - ALPHA_PINTURA)
-                        + color * ALPHA_PINTURA).astype(np.uint8)
+        capa, n = _capa_siluetas(detectar_poligonos_fibra(det, rgb_det), keep_mask, H, W)
+    _aplicar_capa(fondo_rgb, capa)
     return n
 
 
@@ -538,10 +609,8 @@ def procesar_toma(det: FiberYOLODetector, carpeta: Path, salida_mp4: Path) -> bo
         for n, idx in enumerate(indices, 1):
             raw = np.asarray(read_image_any(archivos[idx]))
 
-            # Deteccion siempre sobre la imagen preprocesada (lo que ve el
-            # detector real). Se calcula una sola vez.
+            # Imagen que ve el detector (la misma que usa el PTV: preprocesada)
             rgb_det = preprocess_frame_for_ptv(raw, preprocess_params)  # RGB uint8
-            polys = detectar_poligonos_fibra(det, rgb_det)
 
             # Fondo del video: el preprocesado (reutiliza rgb_det) o el raw limpio
             if FONDO == "preprocesado":
@@ -549,7 +618,8 @@ def procesar_toma(det: FiberYOLODetector, carpeta: Path, salida_mp4: Path) -> bo
             else:
                 fondo = fondo_rgb_desde_raw(raw, lo, hi)
 
-            total_fibras += pintar_fibras(fondo, polys, keep_mask)
+            # Detecta (SAHI + NMS + PCA) y pinta segun MODO_PINTURA
+            total_fibras += pintar_fibras(det, rgb_det, fondo, keep_mask)
 
             escritor.append_data(a_dims_pares(fondo))
             if n % 25 == 0 or n == len(indices):
