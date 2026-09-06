@@ -23,8 +23,9 @@ Que hace, punto por punto:
      usa el muestreo adaptativo del tracker: 1 s grabado dura 1 s en el video.
   5. Detecta las fibras en cada frame muestreado, descarta las que caen en la
      zona enmascarada (mascara fija, convencion blanco=ignorar, filtro por
-     centroide como el tracker) y pinta cada fibra con COLOR_FIBRA_HEX, ya sea
-     como LINEA estimada por PCA (MODO_PINTURA="linea") o como la silueta YOLO.
+     centroide como el tracker) y pinta cada fibra con el color segun su carbopol
+     (car 02 -> azul #5e6ca2, car 05 -> naranjo #d76336), ya sea como LINEA
+     estimada por PCA (MODO_PINTURA="linea") o como la silueta YOLO.
   6. Escribe el .mp4 en la carpeta de salida.
 
 IMPORTANTE — entorno:
@@ -50,7 +51,14 @@ import cv2
 # CONFIGURACION  (edita solo esta seccion)
 # ----------------------------------------------------------------------------
 
-COLOR_FIBRA_HEX = "#5e6ca2"   # color con el que se pintan las fibras
+# Color de la fibra segun el carbopol (car) de la toma:
+#   car 02 -> azul     #5e6ca2
+#   car 05 -> naranjo  #d76336
+COLORES_POR_CAR = {
+    "02": "#5e6ca2",
+    "05": "#d76336",
+}
+COLOR_FIBRA_HEX_DEFAULT = "#5e6ca2"   # fallback si el car no esta en el dict
 ALPHA_PINTURA   = 1.0         # 1.0 = opaco; <1.0 = semitransparente (ambos modos)
 
 # Que se pinta por fibra:
@@ -136,7 +144,10 @@ def hex_a_rgb(h: str) -> tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
-COLOR_FIBRA_RGB = hex_a_rgb(COLOR_FIBRA_HEX)   # (94, 108, 162) para #5e6ca2
+def color_para_car(car: str) -> tuple[int, int, int]:
+    """RGB de la fibra segun el carbopol de la toma (car '02' -> azul, '05' -> naranjo)."""
+    hex_col = COLORES_POR_CAR.get(str(car).zfill(2), COLOR_FIBRA_HEX_DEFAULT)
+    return hex_a_rgb(hex_col)
 
 
 # ----------------------------------------------------------------------------
@@ -509,27 +520,28 @@ def _capa_siluetas(polys: list[np.ndarray], keep_mask, H: int, W: int) -> tuple[
     return capa, n
 
 
-def _aplicar_capa(fondo_rgb: np.ndarray, capa_u8: np.ndarray) -> None:
-    """Mezcla COLOR_FIBRA sobre fondo_rgb segun cobertura (capa) y ALPHA_PINTURA."""
+def _aplicar_capa(fondo_rgb: np.ndarray, capa_u8: np.ndarray,
+                  color_rgb: tuple[int, int, int]) -> None:
+    """Mezcla color_rgb sobre fondo_rgb segun cobertura (capa) y ALPHA_PINTURA."""
     m = capa_u8 > 0
     if not m.any():
         return
     cov = (capa_u8[m].astype(np.float32) / 255.0) * float(ALPHA_PINTURA)  # (K,)
     cov = cov[:, None]
-    color = np.array(COLOR_FIBRA_RGB, dtype=np.float32)
+    color = np.array(color_rgb, dtype=np.float32)
     fondo_rgb[m] = (fondo_rgb[m].astype(np.float32) * (1.0 - cov)
                     + color * cov).astype(np.uint8)
 
 
-def pintar_fibras(det: FiberYOLODetector, rgb_det: np.ndarray,
-                  fondo_rgb: np.ndarray, keep_mask) -> int:
+def pintar_fibras(det: FiberYOLODetector, rgb_det: np.ndarray, fondo_rgb: np.ndarray,
+                  keep_mask, color_rgb: tuple[int, int, int]) -> int:
     """Detecta segun MODO_PINTURA y pinta sobre fondo_rgb. Devuelve cuantas pinto."""
     H, W = fondo_rgb.shape[:2]
     if MODO_PINTURA == "linea":
         capa, n = _capa_lineas(detectar_fibras_pca(det, rgb_det), keep_mask, H, W)
     else:
         capa, n = _capa_siluetas(detectar_poligonos_fibra(det, rgb_det), keep_mask, H, W)
-    _aplicar_capa(fondo_rgb, capa)
+    _aplicar_capa(fondo_rgb, capa, color_rgb)
     return n
 
 
@@ -560,6 +572,7 @@ def procesar_toma(det: FiberYOLODetector, carpeta: Path, salida_mp4: Path) -> bo
     prof = V.CAM_PROFILES_PTV[cam]
     fps_captura = float(prof["fps"])
     preprocess_params = V.CAM_PREPROCESS_PARAMS_PTV.get(f"cam{cam}", {})
+    color_rgb = color_para_car(carbopol)   # car 02 -> azul, car 05 -> naranjo
 
     archivos = listar_imagenes(carpeta)
     if not archivos:
@@ -579,7 +592,8 @@ def procesar_toma(det: FiberYOLODetector, carpeta: Path, salida_mp4: Path) -> bo
         print("  [salto] Seleccion vacia.", flush=True)
         return False
 
-    print(f"  cam={cam} car={carbopol} fps_captura={fps_captura:g}", flush=True)
+    color_hex = COLORES_POR_CAR.get(str(carbopol).zfill(2), COLOR_FIBRA_HEX_DEFAULT)
+    print(f"  cam={cam} car={carbopol} color={color_hex} {color_rgb} fps_captura={fps_captura:g}", flush=True)
     print(f"  imagenes={len(archivos)}  skip={skip}  "
           f"duracion={'END' if dur is None else f'{dur:g}s'} -> {duracion:.2f}s", flush=True)
     print(f"  paso={paso:.3f} img/frame  frames_video={len(indices)}", flush=True)
@@ -619,7 +633,7 @@ def procesar_toma(det: FiberYOLODetector, carpeta: Path, salida_mp4: Path) -> bo
                 fondo = fondo_rgb_desde_raw(raw, lo, hi)
 
             # Detecta (SAHI + NMS + PCA) y pinta segun MODO_PINTURA
-            total_fibras += pintar_fibras(det, rgb_det, fondo, keep_mask)
+            total_fibras += pintar_fibras(det, rgb_det, fondo, keep_mask, color_rgb)
 
             escritor.append_data(a_dims_pares(fondo))
             if n % 25 == 0 or n == len(indices):
@@ -644,7 +658,7 @@ def main() -> None:
     if not tomas:
         sys.exit(f"No hay tomas PTV validas en {V.PTV_BASE_DIR}")
 
-    print(f"[PINTAR] Color fibras : {COLOR_FIBRA_HEX} {COLOR_FIBRA_RGB}", flush=True)
+    print(f"[PINTAR] Colores/car  : {COLORES_POR_CAR}  (default {COLOR_FIBRA_HEX_DEFAULT})", flush=True)
     print(f"[PINTAR] Tomas PTV    : {len(tomas)}", flush=True)
     print(f"[PINTAR] Modelo       : {V.YOLO_TRACK_MODEL}", flush=True)
     print(f"[PINTAR] conf={V.CONF_TRACK}  SAHI scale={V.SAHI_SCALE_FACTOR} "
