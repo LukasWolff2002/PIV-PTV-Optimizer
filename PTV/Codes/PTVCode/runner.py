@@ -210,15 +210,32 @@ def _save_annotated_frames_px(
     px_per_mm: float,
     tail_length: int = 0,
 ) -> None:
-    """Dibuja detecciones y trayectorias en coordenadas px sobre los frames."""
+    """
+    Dibuja detecciones y trayectorias en coordenadas px sobre los frames.
+
+    Estilo:
+    - Líneas con antialiasing y un halo oscuro debajo, para que se lean igual
+      sobre zonas claras y oscuras de la imagen.
+    - La cola de cada trayectoria se atenúa hacia el pasado (más fina y con el
+      color mezclado hacia gris), de modo que la dirección de avance se lee sin
+      flechas.
+    - Posición actual: punto del color del track con anillo blanco.
+    - Detecciones en blanco, para no confundirse con los colores de los tracks.
+    """
     import colorsys
+
+    aa = cv2.LINE_AA
+    halo = (18, 18, 18)
+    det_color = (240, 240, 240)
+    faded = np.array([110, 110, 110], dtype=float)
+    n_bands = 6                       # tramos de la cola con distinta intensidad
 
     track_colors: dict[int, tuple] = {}
 
     def _color(tid: int) -> tuple:
         if tid not in track_colors:
             hue = (tid * 137.508) % 360
-            r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.85, 0.95)
+            r, g, b = colorsys.hsv_to_rgb(hue / 360, 0.70, 1.0)
             track_colors[tid] = (int(b * 255), int(g * 255), int(r * 255))
         return track_colors[tid]
 
@@ -234,7 +251,7 @@ def _save_annotated_frames_px(
         canvas  = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         fi_orig = entry["frame_idx_original"]
 
-        # Detecciones (ya en px)
+        # Detecciones (ya en px): eje de la fibra con halo + centroide
         for d in dets:
             cx_px = int(round(d.cx))
             cy_px = int(round(d.cy))
@@ -242,11 +259,12 @@ def _save_annotated_frames_px(
             ang   = math.radians(d.angle_deg)
             dx_px = int(round(math.cos(ang) * half))
             dy_px = int(round(math.sin(ang) * half))
-            cv2.line(canvas,
-                     (cx_px - dx_px, cy_px - dy_px),
-                     (cx_px + dx_px, cy_px + dy_px),
-                     (0, 220, 255), 1)
-            cv2.circle(canvas, (cx_px, cy_px), 2, (0, 220, 255), -1)
+            p1 = (cx_px - dx_px, cy_px - dy_px)
+            p2 = (cx_px + dx_px, cy_px + dy_px)
+            cv2.line(canvas, p1, p2, halo, 3, aa)
+            cv2.line(canvas, p1, p2, det_color, 1, aa)
+            cv2.circle(canvas, (cx_px, cy_px), 3, halo, -1, aa)
+            cv2.circle(canvas, (cx_px, cy_px), 2, det_color, -1, aa)
 
         # Trayectorias (mm → px)
         for tr in tracks:
@@ -259,13 +277,30 @@ def _save_annotated_frames_px(
                 hist_px = hist_px[-tail_length:]
             if not hist_px:
                 continue
+
             color = _color(tr.track_id)
             n = len(hist_px)
             if n >= 2:
-                for i in range(1, n):
-                    thickness = 1 if i < n * 0.6 else 2
-                    cv2.line(canvas, hist_px[i - 1], hist_px[i], color, thickness)
-            cv2.circle(canvas, hist_px[-1], 4, color, -1)
+                pts = np.asarray(hist_px, dtype=np.int32)
+                cv2.polylines(canvas, [pts], False, halo, 4, aa)
+
+                # Cola atenuada: de lo más antiguo (tenue, fino) a lo más reciente
+                bounds = np.linspace(0, n - 1, min(n_bands, n - 1) + 1).astype(int)
+                n_seg = len(bounds) - 1
+                for k in range(n_seg):
+                    seg = pts[bounds[k]:bounds[k + 1] + 1]
+                    if len(seg) < 2:
+                        continue
+                    w_recent = (k + 1) / n_seg
+                    mix = faded * (1.0 - w_recent) + np.asarray(color, dtype=float) * w_recent
+                    seg_color = tuple(int(c) for c in mix)
+                    thickness = 1 if w_recent < 0.5 else 2
+                    cv2.polylines(canvas, [seg], False, seg_color, thickness, aa)
+
+            head = hist_px[-1]
+            cv2.circle(canvas, head, 6, halo, -1, aa)
+            cv2.circle(canvas, head, 5, (255, 255, 255), -1, aa)
+            cv2.circle(canvas, head, 3, color, -1, aa)
 
         out_png = ann_dir / f"{Path(entry['img_path'].name).stem}.png"
         cv2.imwrite(str(out_png), canvas)
@@ -547,26 +582,26 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
     print(f"[PTV] summary.json   → {run_cfg.out_dir / 'summary.json'}", flush=True)
 
     # ── Visualizador HTML ─────────────────────────────────────────
-    #if run_cfg.save_images and frames_buffer:
-    #    ann_dir = run_cfg.out_dir / "annotations"
-    #    ensure_dir(ann_dir)
-    #    _save_annotated_frames_px(
-     #       frames_buffer, dets_buffer, schedule,
-    #        tracks_filtered, ann_dir,
-    #        px_per_mm=px_per_mm,
-    #        tail_length=run_cfg.viz_tail_length,
-     #   )
-    #    ann_images = list(ann_dir.glob("*.png"))
-    #    if ann_images:
-    #        create_interactive_visualizer(
-    #            ann_dir   = ann_dir,
-    #            tracks    = tracks_filtered,
-    #            out_path  = run_cfg.out_dir / "visualizer.html",
-    #            width_px  = run_cfg.width_px,
-    #            height_px = run_cfg.height_px,
-    #            fps       = fps,
-    #            px_per_mm = px_per_mm,   # ← agregar esta línea
-    #        )
-    #        print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
+    if run_cfg.save_images and frames_buffer:
+        ann_dir = run_cfg.out_dir / "annotations"
+        ensure_dir(ann_dir)
+        _save_annotated_frames_px(
+            frames_buffer, dets_buffer, schedule,
+            tracks_filtered, ann_dir,
+            px_per_mm=px_per_mm,
+            tail_length=run_cfg.viz_tail_length,
+       )
+        ann_images = list(ann_dir.glob("*.png"))
+        if ann_images:
+            create_interactive_visualizer(
+                ann_dir   = ann_dir,
+                tracks    = tracks_filtered,
+                out_path  = run_cfg.out_dir / "visualizer.html",
+                width_px  = run_cfg.width_px,
+                height_px = run_cfg.height_px,
+                fps       = fps,
+                px_per_mm = px_per_mm,   # ← agregar esta línea
+            )
+            print(f"[PTV] visualizer.html → {run_cfg.out_dir / 'visualizer.html'}", flush=True)
 
     print("[PTV] Completado.", flush=True)

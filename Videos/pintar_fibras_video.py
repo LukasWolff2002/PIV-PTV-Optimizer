@@ -39,10 +39,16 @@ from __future__ import annotations
 
 import csv
 import math
+import os
 import sys
 import urllib.request
 from io import StringIO
 from pathlib import Path
+
+# En Windows, torch (MKL) + numpy + opencv a veces cargan dos runtimes de OpenMP
+# (libiomp5md.dll) y eso lanza "OMP: Error #15" y aborta. Permitir la duplicacion
+# es el workaround estandar; DEBE setearse ANTES de importar numpy/cv2/torch.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import numpy as np
 import cv2
@@ -69,6 +75,10 @@ ALPHA_PINTURA   = 1.0         # 1.0 = opaco; <1.0 = semitransparente (ambos modo
 MODO_PINTURA   = "linea"
 GROSOR_LINEA   = 2            # grosor de la linea en px (modo "linea")
 DIBUJAR_CENTRO = False        # dibujar un punto en el centroide de cada fibra
+
+# Si True, en el primer frame de cada toma imprime el tamano upscaleado y cuantos
+# tiles SAHI entran al batch (para verificar que el upsampling/tiling se aplica).
+DEBUG_DETECCION = False
 
 FPS_SALIDA = 30.0             # fps del video final (velocidad real preservada)
 
@@ -625,6 +635,13 @@ def procesar_toma(det: FiberYOLODetector, carpeta: Path, salida_mp4: Path) -> bo
 
             # Imagen que ve el detector (la misma que usa el PTV: preprocesada)
             rgb_det = preprocess_frame_for_ptv(raw, preprocess_params)  # RGB uint8
+
+            if DEBUG_DETECCION and n == 1:
+                _up = det._upscale_to_bgr(rgb_det)
+                _tiles, _ = det._slice_views(_up)
+                print(f"  [DEBUG] SAHI: original={rgb_det.shape[1]}x{rgb_det.shape[0]}  "
+                      f"upscaled(x{det.scale_factor})={_up.shape[1]}x{_up.shape[0]}  "
+                      f"tiles/batch={len(_tiles)}  conf={det.conf}", flush=True)
 
             # Fondo del video: el preprocesado (reutiliza rgb_det) o el raw limpio
             if FONDO == "preprocesado":

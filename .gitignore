@@ -5,6 +5,7 @@ PTV/Codes/Segmentation-Models/yolo11s-seg.pt
 PTV/Tomas/
 PTV/Otras/
 PTV/Realizadas/
+PIV/Realizadas/
 ResultadosPIV/
 ResultadosPTV/
 Masks/
@@ -17,5 +18,5 @@ ResultadosPTVFiltrado/
 # Excepciones - mantener archivos README
 !ResultadosPIV/README.md
 !ResultadosPTV/README.md
-
+!PIV/Realizadas/README.md
 Videos/salida/

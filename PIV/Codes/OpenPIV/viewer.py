@@ -21,23 +21,24 @@ from .timestamp_utils import load_timestamps_from_metadata, get_timestamp_for_re
 
 STYLE = {
     "figure_bg": "#ffffff",
-    "panel_bg": "#f6f8fb",
+    "panel_bg": "#f4f4f4",
+    "card_bg": "#ffffff",
     "axes_bg": "#ffffff",
-    "spine": "#334155",
-    "grid": "#cbd5e1",
-    "text": "#0f172a",
-    "muted": "#64748b",
-    "valid": "#16a34a",
-    "invalid": "#dc2626",
-    "accent": "#2563eb",
-    "accent_soft": "#93c5fd",
-    "neutral": "#94a3b8",
-    "zero": "#475569",
+    "spine": "#000000",
+    "text": "#000000",
+    # Paleta Okabe–Ito: distinguible con daltonismo
+    "valid": "#009E73",
+    "invalid": "#D55E00",
+    "accent": "#0072B2",
+    "slider_track": "#d9d9d9",
+    "button": "#e6e6e6",
+    "button_hover": "#cccccc",
+    "zero": "#000000",
     "vorticity_cmap": "RdBu_r",
     "speed_cmap": "viridis",
-    "info_bg": "#eff6ff",
-    "info_border": "#93c5fd",
 }
+
+FONT_SERIF = ["Times New Roman", "DejaVu Serif", "STIXGeneral", "serif"]
 
 
 def _setup_matplotlib_style() -> None:
@@ -45,40 +46,90 @@ def _setup_matplotlib_style() -> None:
         "figure.facecolor": STYLE["figure_bg"],
         "axes.facecolor": STYLE["axes_bg"],
         "axes.edgecolor": STYLE["spine"],
+        "axes.linewidth": 1.0,
         "axes.labelcolor": STYLE["text"],
         "axes.titlecolor": STYLE["text"],
-        "xtick.color": STYLE["muted"],
-        "ytick.color": STYLE["muted"],
-        "grid.color": STYLE["grid"],
-        "grid.alpha": 0.25,
-        "grid.linestyle": "--",
-        "grid.linewidth": 0.7,
-        "font.size": 10,
-        "axes.titlesize": 12,
-        "axes.labelsize": 10,
+        "axes.grid": False,
+        "xtick.color": STYLE["text"],
+        "ytick.color": STYLE["text"],
+        "font.family": "serif",
+        "font.serif": FONT_SERIF,
+        "mathtext.fontset": "stix",
+        "font.size": 11,
+        "axes.titlesize": 13,
+        "axes.labelsize": 12,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
+        "legend.fontsize": 10,
         "legend.frameon": True,
+        "legend.fancybox": False,
         "legend.facecolor": "#ffffff",
-        "legend.edgecolor": "#cbd5e1",
-        "legend.framealpha": 0.95,
+        "legend.edgecolor": "#000000",
+        "legend.framealpha": 0.92,
     })
 
 
 def _style_axes(ax, equal: bool = False) -> None:
     ax.set_facecolor(STYLE["axes_bg"])
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_color(STYLE["spine"])
-    ax.spines["bottom"].set_color(STYLE["spine"])
-    ax.spines["left"].set_linewidth(1.0)
-    ax.spines["bottom"].set_linewidth(1.0)
-    ax.tick_params(labelsize=9, colors=STYLE["muted"])
-    ax.grid(True)
+    for side in ("top", "right", "left", "bottom"):
+        ax.spines[side].set_visible(True)
+        ax.spines[side].set_color(STYLE["spine"])
+        ax.spines[side].set_linewidth(1.0)
+    ax.tick_params(labelsize=10, colors=STYLE["text"], width=0.8, length=4)
+    ax.grid(False)
     if equal:
         ax.set_aspect("equal", adjustable="box")
 
 
 def _style_title(ax, title: str) -> None:
-    ax.set_title(title, loc="left", pad=10, fontweight="semibold", color=STYLE["text"])
+    ax.set_title(title, loc="left", pad=8, fontsize=13,
+                 fontweight="bold", color=STYLE["text"])
+
+
+def _style_colorbar(cbar, label: str) -> None:
+    cbar.set_label(label, color=STYLE["text"], fontsize=11)
+    cbar.outline.set_edgecolor(STYLE["spine"])
+    cbar.outline.set_linewidth(0.8)
+    cbar.ax.tick_params(labelsize=10, colors=STYLE["text"], width=0.8)
+
+
+def _time_label(timestamp_s: Optional[float], dt_ms: float, idx: int) -> str:
+    """Tiempo real del par; si no hay metadata, estimación dt × índice."""
+    t = timestamp_s if timestamp_s is not None else dt_ms * idx / 1000.0
+    return f"t = {t:.3f} s"
+
+
+def _background_limits(bg: np.ndarray) -> Tuple[float, float]:
+    """Estira el contraste del fondo al rango p2–p98."""
+    lo, hi = np.percentile(bg, (2, 98))
+    if hi <= lo:
+        return float(bg.min()), float(bg.max()) + 1e-6
+    return float(lo), float(hi)
+
+
+def _set_uv_limits(ax, uvals: np.ndarray, vvals: np.ndarray,
+                   hull_closed: Optional[np.ndarray] = None) -> None:
+    """
+    Límites cuadrados que contienen el origen, el 99 % de los datos y la
+    región de validación completa.
+    """
+    cu, cv = float(np.median(uvals)), float(np.median(vvals))
+    half = max(np.percentile(np.abs(uvals - cu), 99),
+               np.percentile(np.abs(vvals - cv), 99), 1e-6)
+    u_lo, u_hi = min(cu - half, 0.0), max(cu + half, 0.0)
+    v_lo, v_hi = min(cv - half, 0.0), max(cv + half, 0.0)
+    if hull_closed is not None and hull_closed.size:
+        u_lo, u_hi = min(u_lo, hull_closed[:, 0].min()), max(u_hi, hull_closed[:, 0].max())
+        v_lo, v_hi = min(v_lo, hull_closed[:, 1].min()), max(v_hi, hull_closed[:, 1].max())
+    span = max(u_hi - u_lo, v_hi - v_lo) * 1.08
+    mu, mv = (u_lo + u_hi) / 2.0, (v_lo + v_hi) / 2.0
+    ax.set_xlim(mu - span / 2.0, mu + span / 2.0)
+    ax.set_ylim(mv - span / 2.0, mv + span / 2.0)
+
+
+def _draw_zero_axes(ax) -> None:
+    ax.axhline(0, color=STYLE["zero"], linewidth=0.8, alpha=0.35, zorder=0)
+    ax.axvline(0, color=STYLE["zero"], linewidth=0.8, alpha=0.35, zorder=0)
 
 
 def _force_square_axes(*axes) -> None:
@@ -218,121 +269,80 @@ def _create_right_panel_enhanced(
     frame_init: int = 0,
     scale_init: float = 1.0,
 ) -> Tuple[Any, Any, Slider, Slider, Button]:
-    """Panel lateral con área de información temporal dinámica"""
+    """Panel lateral con controles e información temporal dinámica."""
     ax_panel = fig.add_subplot(panel_spec)
     ax_panel.set_facecolor(STYLE["panel_bg"])
     ax_panel.set_xticks([])
     ax_panel.set_yticks([])
     for s in ax_panel.spines.values():
-        s.set_color("#dbe3ec")
-        s.set_linewidth(1.0)
+        s.set_color(STYLE["spine"])
+        s.set_linewidth(0.8)
 
     pos = ax_panel.get_position()
     x0, y0, w, h = pos.x0, pos.y0, pos.width, pos.height
 
     # Título
-    ax_title = fig.add_axes([x0 + 0.08 * w, y0 + 0.90 * h, 0.84 * w, 0.05 * h], facecolor=STYLE["panel_bg"])
+    ax_title = fig.add_axes([x0 + 0.07 * w, y0 + 0.91 * h, 0.86 * w, 0.05 * h], facecolor=STYLE["panel_bg"])
     ax_title.axis("off")
-    ax_title.text(
-        0.0, 0.5, "Controles",
-        ha="left", va="center",
-        fontsize=11, fontweight="semibold", color=STYLE["text"]
-    )
+    ax_title.text(0.0, 0.5, "Controles", ha="left", va="center",
+                  fontsize=13, fontweight="bold", color=STYLE["text"])
 
-    # Slider de momento/frame
-    ax_momento = fig.add_axes([x0 + 0.12 * w, y0 + 0.82 * h, 0.76 * w, 0.028 * h], facecolor=STYLE["panel_bg"])
-    s_momento = Slider(
-        ax=ax_momento,
-        label="Par",
-        valmin=0,
-        valmax=max(0, n_frames - 1),
-        valinit=frame_init,
-        valstep=1,
-        color=STYLE["accent"],
-        track_color="#dbeafe"
-    )
-    s_momento.label.set_fontsize(9)
-    s_momento.valtext.set_fontsize(9)
+    def _slider(y_frac: float, label: str, **kw) -> Slider:
+        ax_s = fig.add_axes([x0 + 0.30 * w, y0 + y_frac * h, 0.52 * w, 0.026 * h],
+                            facecolor=STYLE["panel_bg"])
+        s = Slider(ax=ax_s, label=label, color=STYLE["accent"],
+                   track_color=STYLE["slider_track"], **kw)
+        s.label.set_fontsize(11)
+        s.label.set_color(STYLE["text"])
+        s.valtext.set_fontsize(11)
+        s.valtext.set_color(STYLE["text"])
+        return s
 
-    # Slider de escala
-    ax_scale = fig.add_axes([x0 + 0.12 * w, y0 + 0.74 * h, 0.76 * w, 0.028 * h], facecolor=STYLE["panel_bg"])
-    s_scale = Slider(
-        ax=ax_scale,
-        label="Escala",
-        valmin=0.2,
-        valmax=4.0,
-        valinit=scale_init,
-        valstep=0.05,
-        color=STYLE["accent"],
-        track_color="#dbeafe"
-    )
-    s_scale.label.set_fontsize(9)
-    s_scale.valtext.set_fontsize(9)
+    s_momento = _slider(0.83, "Par", valmin=0, valmax=max(0, n_frames - 1),
+                        valinit=frame_init, valstep=1)
+    s_scale = _slider(0.76, "Escala", valmin=0.2, valmax=4.0,
+                      valinit=scale_init, valstep=0.05)
 
     # Botón reset
-    ax_reset = fig.add_axes([x0 + 0.22 * w, y0 + 0.66 * h, 0.56 * w, 0.045 * h], facecolor=STYLE["panel_bg"])
-    btn_reset = Button(
-        ax=ax_reset,
-        label="Reset",
-        color="#e2e8f0",
-        hovercolor="#cbd5e1"
-    )
-    btn_reset.label.set_fontsize(9)
+    ax_reset = fig.add_axes([x0 + 0.26 * w, y0 + 0.67 * h, 0.48 * w, 0.045 * h], facecolor=STYLE["panel_bg"])
+    btn_reset = Button(ax=ax_reset, label="Reset",
+                       color=STYLE["button"], hovercolor=STYLE["button_hover"])
+    btn_reset.label.set_fontsize(11)
     btn_reset.label.set_color(STYLE["text"])
+    for s in ax_reset.spines.values():
+        s.set_color(STYLE["spine"])
+        s.set_linewidth(0.8)
 
-    # ================================================================
-    # NUEVO: Área de información temporal dinámica
-    # ================================================================
+    # Área de información temporal (se rellena en _update_temporal_info)
     ax_temporal_info = fig.add_axes(
-        [x0 + 0.08 * w, y0 + 0.44 * h, 0.84 * w, 0.18 * h],
-        facecolor=STYLE["panel_bg"]
+        [x0 + 0.07 * w, y0 + 0.31 * h, 0.86 * w, 0.33 * h],
+        facecolor=STYLE["panel_bg"],
     )
     ax_temporal_info.axis("off")
 
-    # Card de fondo
-    card_temporal = FancyBboxPatch(
-        (0, 0), 1, 1,
-        boxstyle="round,pad=0.015,rounding_size=0.025",
-        transform=ax_temporal_info.transAxes,
-        facecolor=STYLE["info_bg"],
-        edgecolor=STYLE["info_border"],
-        linewidth=1.2
-    )
-    ax_temporal_info.add_patch(card_temporal)
-
-    # Área de uso/ayuda (más pequeña)
-    ax_info = fig.add_axes([x0 + 0.08 * w, y0 + 0.10 * h, 0.84 * w, 0.28 * h], facecolor=STYLE["panel_bg"])
+    # Área de ayuda
+    ax_info = fig.add_axes([x0 + 0.07 * w, y0 + 0.04 * h, 0.86 * w, 0.23 * h], facecolor=STYLE["panel_bg"])
     ax_info.axis("off")
-
-    card = FancyBboxPatch(
-        (0, 0), 1, 1,
-        boxstyle="round,pad=0.012,rounding_size=0.02",
-        transform=ax_info.transAxes,
-        facecolor="#ffffff",
-        edgecolor="#dbe3ec",
-        linewidth=1.0
-    )
-    ax_info.add_patch(card)
-
-    ax_info.text(
-        0.06, 0.88, "Navegación",
-        ha="left", va="center",
-        fontsize=10, fontweight="semibold", color=STYLE["text"],
-        transform=ax_info.transAxes
-    )
-
-    info_text = (
-        "• Par: navega entre resultados\n\n"
-        "• Escala: ajusta longitud de vectores\n\n"
-        "• Reset: valores iniciales\n\n"
-        "• Teclado: ← → para navegar"
-    )
-    ax_info.text(
-        0.06, 0.72, info_text,
-        ha="left", va="top",
-        fontsize=8.5, color=STYLE["muted"],
-        transform=ax_info.transAxes, linespacing=1.5
-    )
+    ax_info.add_patch(FancyBboxPatch(
+        (0.004, 0.004), 0.992, 0.992, boxstyle="square,pad=0",
+        transform=ax_info.transAxes, clip_on=False,
+        facecolor=STYLE["card_bg"], edgecolor=STYLE["spine"], linewidth=0.8,
+    ))
+    ax_info.text(0.07, 0.86, "Navegación", ha="left", va="center",
+                 fontsize=12, fontweight="bold", color=STYLE["text"],
+                 transform=ax_info.transAxes)
+    help_rows = [
+        ("Par", "navega entre resultados"),
+        ("Escala", "longitud de los vectores"),
+        ("Reset", "valores iniciales"),
+        ("← →", "par anterior / siguiente"),
+    ]
+    for i, (key, desc) in enumerate(help_rows):
+        y = 0.66 - i * 0.17
+        ax_info.text(0.07, y, key, ha="left", va="center", fontsize=10.5,
+                     fontweight="bold", color=STYLE["text"], transform=ax_info.transAxes)
+        ax_info.text(0.33, y, desc, ha="left", va="center", fontsize=10.5,
+                     color=STYLE["text"], transform=ax_info.transAxes)
 
     return ax_panel, ax_temporal_info, s_momento, s_scale, btn_reset
 
@@ -346,94 +356,59 @@ def _update_temporal_info(
     valid_count: int,
     total_count: int,
     max_speed: float,
-    timestamp_s: Optional[float] = None,  # ← NUEVO: recibir timestamp directamente
+    timestamp_s: Optional[float] = None,
 ) -> None:
-    """Actualiza el panel de información temporal"""
+    """Actualiza la tarjeta de información temporal."""
     ax_temporal_info.clear()
     ax_temporal_info.axis("off")
-    
-    # Extraer metadata del nombre si es posible
+
     name = names[idx] if idx < len(names) else ""
     metadata = _extract_metadata_from_filename(name)
-    
-    # Usar timestamp pasado como parámetro o estimación básica
+
     if timestamp_s is None:
-        # Estimación básica (fallback)
         timestamp_s = idx * (dt_ms / 1000.0)
-    
-    # Información de región
-    if metadata and 'region_idx' in metadata:
-        region_name = _get_region_name(metadata['region_idx'])
-        region_info = f"{region_name}"
-        if 'skip_inter' in metadata:
-            region_info += f" (skip={metadata['skip_inter']})"
+
+    if metadata and "region_idx" in metadata:
+        region_info = _get_region_name(metadata["region_idx"])
+        if "skip_inter" in metadata:
+            region_info += f" · skip {metadata['skip_inter']}"
     else:
         region_info = "—"
-    
-    # Card de fondo
-    card = FancyBboxPatch(
-        (0, 0), 1, 1,
-        boxstyle="round,pad=0.015,rounding_size=0.025",
-        transform=ax_temporal_info.transAxes,
-        facecolor=STYLE["info_bg"],
-        edgecolor=STYLE["info_border"],
-        linewidth=1.2
-    )
-    ax_temporal_info.add_patch(card)
-    
-    # Título
-    ax_temporal_info.text(
-        0.06, 0.82, "Información Temporal",
-        ha="left", va="center",
-        fontsize=9.5, fontweight="semibold", color=STYLE["text"],
-        transform=ax_temporal_info.transAxes
-    )
-    
-    # Línea de separación
-    ax_temporal_info.plot(
-        [0.06, 0.94], [0.72, 0.72],
-        transform=ax_temporal_info.transAxes,
-        color=STYLE["info_border"], linewidth=1.0, alpha=0.5
-    )
-    
-    # Información principal
-    info_lines = [
-        f"Par:  {idx + 1} / {n_frames}",
-        f"t =  {timestamp_s:.3f} s",
-        f"Δt = {dt_ms:.3f} ms",
-        f"",
-        f"Región:  {region_info}",
-        f"Vectores:  {valid_count:,} / {total_count:,}",
-        f"V_max:  {max_speed:.1f} mm/s",
+
+    ax_temporal_info.add_patch(FancyBboxPatch(
+        (0.004, 0.004), 0.992, 0.992, boxstyle="square,pad=0",
+        transform=ax_temporal_info.transAxes, clip_on=False,
+        facecolor=STYLE["card_bg"], edgecolor=STYLE["spine"], linewidth=0.8,
+    ))
+    ax_temporal_info.text(0.07, 0.89, "Información temporal", ha="left", va="center",
+                          fontsize=12, fontweight="bold", color=STYLE["text"],
+                          transform=ax_temporal_info.transAxes)
+    ax_temporal_info.plot([0.07, 0.93], [0.79, 0.79], transform=ax_temporal_info.transAxes,
+                          color=STYLE["spine"], linewidth=0.6)
+
+    rows = [
+        ("Par", f"{idx + 1} / {n_frames}", True),
+        ("t", f"{timestamp_s:.3f} s", True),
+        ("Δt", f"{dt_ms:.3f} ms", True),
+        None,
+        ("Vectores", f"{valid_count:,} / {total_count:,}", False),
+        ("V máx", f"{max_speed:.1f} mm/s", False),
+        ("Región", "", False),
     ]
-    
-    y_start = 0.62
-    y_step = 0.10
-    
-    for i, line in enumerate(info_lines):
-        if line == "":
-            continue
-        
-        # Colorear diferente las primeras 3 líneas (datos temporales)
-        if i < 3:
-            color = STYLE["accent"]
-            weight = "semibold"
-            size = 9.0
-        else:
-            color = STYLE["text"]
-            weight = "normal"
-            size = 8.5
-        
-        ax_temporal_info.text(
-            0.06, y_start - i * y_step,
-            line,
-            ha="left", va="center",
-            fontsize=size,
-            fontweight=weight,
-            color=color,
-            transform=ax_temporal_info.transAxes,
-            family="monospace"
-        )
+    y = 0.69
+    step = 0.084
+    for row in rows:
+        if row is not None:
+            label, value, strong = row
+            ax_temporal_info.text(0.07, y, label, ha="left", va="center", fontsize=10,
+                                  color=STYLE["text"], transform=ax_temporal_info.transAxes)
+            ax_temporal_info.text(0.93, y, value, ha="right", va="center", fontsize=10,
+                                  fontweight="bold" if strong else "normal",
+                                  color=STYLE["text"], transform=ax_temporal_info.transAxes)
+        y -= step
+    # La región puede ser larga: se escribe completa en la línea siguiente
+    ax_temporal_info.text(0.07, y, region_info, ha="left", va="center", fontsize=10,
+                          color=STYLE["text"], transform=ax_temporal_info.transAxes)
 
 
 # ===============================================================
@@ -475,31 +450,23 @@ class ArtistManager:
 class PIVViewer:
 
     def show_initial(self, results: List[PIVResult], names: List[str], cfg: PIVConfig) -> None:
-        """Vista inicial con información temporal mejorada."""
+        """Vista inicial: campo de velocidades y validación en el espacio u–v."""
         _setup_matplotlib_style()
         print("[PIV] Precalculando velocity regions para viewer...", flush=True)
         precomputed = _precompute_hulls(results, cfg.keep_percentile)
-        
-        # ================================================================
-        # NUEVO: Cargar timestamps desde metadata
-        # ================================================================
+
         timestamps = load_timestamps_from_metadata(cfg.images_dir)
         print(f"[PIV] Cargados {len(timestamps)} timestamps desde metadata", flush=True)
 
-        fig = plt.figure(figsize=(17.5, 7.5), facecolor=STYLE["figure_bg"])
-        fig.suptitle(
-            "Análisis PIV · Vista Inicial",
-            fontsize=14,
-            fontweight="semibold",
-            color=STYLE["text"],
-            y=0.97
-        )
+        fig = plt.figure(figsize=(17.0, 7.4), facecolor=STYLE["figure_bg"])
+        fig.suptitle("Análisis PIV · Vista inicial", fontsize=16,
+                     fontweight="bold", color=STYLE["text"], y=0.975)
 
         gs = fig.add_gridspec(
             1, 3,
-            width_ratios=[1.0, 1.0, 0.40],
-            wspace=0.28,
-            left=0.05, right=0.98, top=0.92, bottom=0.08
+            width_ratios=[1.0, 1.0, 0.42],
+            wspace=0.24,
+            left=0.045, right=0.985, top=0.88, bottom=0.08,
         )
 
         ax_vel = fig.add_subplot(gs[0, 0])
@@ -510,7 +477,7 @@ class PIVViewer:
             panel_spec=gs[0, 2],
             n_frames=len(results),
             frame_init=0,
-            scale_init=1.0
+            scale_init=1.0,
         )
 
         mm_per_px = cfg.mm_per_px()
@@ -530,19 +497,17 @@ class PIVViewer:
             bg = r.bg_display
             h_px, w_px = bg.shape
             extent = [0, w_px * mm_per_px, h_px * mm_per_px, 0]
+            bg_lo, bg_hi = _background_limits(bg)
 
             uvals = r.u_mms[valid]
             vvals = r.v_mms[valid]
-            
-            # Estadísticas para panel info
+
             total_points = valid.size
             valid_count = np.sum(inside) if inside is not None else uvals.size
             max_speed = float(np.nanmax(np.sqrt(r.u_mms**2 + r.v_mms**2))) if valid.any() else 0.0
-            
-            # Obtener timestamp correcto desde metadata
+
             timestamp_s = get_timestamp_for_result(r, timestamps)
 
-            # Actualizar panel de información temporal
             _update_temporal_info(
                 ax_temporal_info,
                 idx=idx,
@@ -552,13 +517,20 @@ class PIVViewer:
                 valid_count=valid_count,
                 total_count=total_points,
                 max_speed=max_speed,
-                timestamp_s=timestamp_s,  # ← NUEVO
+                timestamp_s=timestamp_s,
             )
 
             # ---------------------------------------------------
             # Campo espacial
             # ---------------------------------------------------
-            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.78)
+            ax_vel.set_facecolor("black")
+            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent,
+                          vmin=bg_lo, vmax=bg_hi, alpha=0.78, zorder=0)
+
+            quiver_scale = max(scale * 0.12, 1e-6)
+            arrow_style = dict(angles="xy", scale_units="xy", scale=quiver_scale,
+                               width=cfg.quiver_width * 1.6, headwidth=3.6,
+                               headlength=4.2, headaxislength=3.8)
 
             if uvals.size >= 10:
                 inside_grid = np.zeros_like(valid, dtype=bool)
@@ -577,100 +549,50 @@ class PIVViewer:
                     u_norm = r.u_mms
                     v_norm = r.v_mms
 
-                quiver_scale = max(scale * 0.12, 1e-6)
-
-                q1 = ax_vel.quiver(
-                    r.x_mm[ok], r.y_mm[ok],
-                    u_norm[ok], v_norm[ok],
-                    color=STYLE["valid"],
-                    angles="xy",
-                    scale_units="xy",
-                    scale=quiver_scale,
-                    width=cfg.quiver_width * 5,
-                    alpha=0.90
-                )
-
-                q2 = ax_vel.quiver(
-                    r.x_mm[bad], r.y_mm[bad],
-                    u_norm[bad], v_norm[bad],
-                    color=STYLE["invalid"],
-                    angles="xy",
-                    scale_units="xy",
-                    scale=quiver_scale,
-                    width=cfg.quiver_width * 1.15,
-                    alpha=0.75
-                )
-
+                q1 = ax_vel.quiver(r.x_mm[ok], r.y_mm[ok], u_norm[ok], v_norm[ok],
+                                   color=STYLE["valid"], alpha=0.95, zorder=2, **arrow_style)
+                q2 = ax_vel.quiver(r.x_mm[bad], r.y_mm[bad], u_norm[bad], v_norm[bad],
+                                   color=STYLE["invalid"], alpha=0.95, zorder=3, **arrow_style)
                 artist_mgr.register("vel", [q1, q2])
 
                 ax_vel.legend(
                     handles=[
-                        plt.Line2D([0], [0], color=STYLE["valid"], lw=2, label=f"Validados ({np.sum(ok):,})"),
-                        plt.Line2D([0], [0], color=STYLE["invalid"], lw=2, label=f"Rechazados ({np.sum(bad):,})"),
+                        plt.Line2D([0], [0], color=STYLE["valid"], lw=2.5, label=f"Validados ({np.sum(ok):,})"),
+                        plt.Line2D([0], [0], color=STYLE["invalid"], lw=2.5, label=f"Rechazados ({np.sum(bad):,})"),
                     ],
                     loc="upper right",
-                    fontsize=9
                 )
-
             else:
-                quiver_scale = max(scale * 0.12, 1e-6)
-                q = ax_vel.quiver(
-                    r.x_mm[valid], r.y_mm[valid],
-                    r.u_mms[valid], r.v_mms[valid],
-                    color=STYLE["invalid"],
-                    angles="xy",
-                    scale_units="xy",
-                    scale=quiver_scale,
-                    width=cfg.quiver_width * 5,
-                    alpha=0.75
-                )
+                q = ax_vel.quiver(r.x_mm[valid], r.y_mm[valid], r.u_mms[valid], r.v_mms[valid],
+                                  color=STYLE["invalid"], alpha=0.95, zorder=2, **arrow_style)
                 artist_mgr.register("vel", q)
 
-            _style_title(ax_vel, f"Campo de velocidades · t = {r.dt_ms * idx / 1000:.3f}s")
+            _style_title(ax_vel, f"Campo de velocidades · {_time_label(timestamp_s, r.dt_ms, idx)}")
             ax_vel.set_xlabel("x [mm]")
             ax_vel.set_ylabel("y [mm]")
 
             # ---------------------------------------------------
             # Espacio u-v
             # ---------------------------------------------------
+            _draw_zero_axes(ax_uv)
             if uvals.size >= 10:
-                ax_uv.scatter(
-                    uvals[inside], vvals[inside],
-                    s=10, alpha=0.55,
-                    c=STYLE["valid"], edgecolors="none",
-                    label=f"Validados ({np.sum(inside):,})"
-                )
-                ax_uv.scatter(
-                    uvals[~inside], vvals[~inside],
-                    s=10, alpha=0.45,
-                    c=STYLE["invalid"], edgecolors="none",
-                    label=f"Rechazados ({np.sum(~inside):,})"
-                )
-
+                ax_uv.scatter(uvals[inside], vvals[inside], s=12, alpha=0.55,
+                              c=STYLE["valid"], edgecolors="none", marker="o",
+                              label=f"Validados ({np.sum(inside):,})", zorder=2)
+                ax_uv.scatter(uvals[~inside], vvals[~inside], s=22, alpha=0.85,
+                              c=STYLE["invalid"], marker="x", linewidths=0.9,
+                              label=f"Rechazados ({np.sum(~inside):,})", zorder=3)
                 if hull_closed is not None:
-                    ax_uv.plot(
-                        hull_closed[:, 0], hull_closed[:, 1],
-                        color=STYLE["spine"],
-                        linewidth=1.6,
-                        label="Región de validación"
-                    )
+                    ax_uv.plot(hull_closed[:, 0], hull_closed[:, 1], color=STYLE["spine"],
+                               linewidth=1.6, label="Región de validación", zorder=4)
+                ax_uv.legend(loc="upper right")
 
-                ax_uv.legend(loc="upper right", fontsize=9)
-
-            ax_uv.axhline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
-            ax_uv.axvline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
-
-            _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f}ms")
+            _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f} ms")
             ax_uv.set_xlabel("u [mm/s]")
             ax_uv.set_ylabel("v [mm/s]")
 
             if uvals.size > 0:
-                umax = np.percentile(np.abs(uvals), 99)
-                vmax = np.percentile(np.abs(vvals), 99)
-                lim = max(umax, vmax, 1e-6)
-                margin = lim * 0.06
-                ax_uv.set_xlim(-lim - margin, lim + margin)
-                ax_uv.set_ylim(-lim - margin, lim + margin)
+                _set_uv_limits(ax_uv, uvals, vvals, hull_closed)
 
             _force_square_axes(ax_vel, ax_uv)
             fig.canvas.draw_idle()
@@ -701,31 +623,23 @@ class PIVViewer:
         plt.close(fig)
 
     def show_final(self, finals: List[PIVResultFinal], names: List[str], cfg: PIVConfig) -> None:
-        """Vista final con información temporal mejorada."""
+        """Vista final: velocidades, espacio u–v, vorticidad y su distribución."""
         _setup_matplotlib_style()
-        
-        # ================================================================
-        # NUEVO: Cargar timestamps desde metadata
-        # ================================================================
+
         timestamps = load_timestamps_from_metadata(cfg.images_dir)
         print(f"[PIV] Cargados {len(timestamps)} timestamps desde metadata", flush=True)
 
-        fig = plt.figure(figsize=(19.0, 10.5), facecolor=STYLE["figure_bg"])
-        fig.suptitle(
-            "Análisis PIV · Resultados Finales",
-            fontsize=15,
-            fontweight="semibold",
-            color=STYLE["text"],
-            y=0.975
-        )
+        fig = plt.figure(figsize=(19.0, 10.8), facecolor=STYLE["figure_bg"])
+        fig.suptitle("Análisis PIV · Resultados finales", fontsize=17,
+                     fontweight="bold", color=STYLE["text"], y=0.985)
 
         gs = fig.add_gridspec(
             2, 3,
-            width_ratios=[1.0, 1.0, 0.40],
+            width_ratios=[1.0, 1.0, 0.42],
             height_ratios=[1.0, 1.0],
-            hspace=0.28,
-            wspace=0.28,
-            left=0.04, right=0.98, top=0.94, bottom=0.06
+            hspace=0.30,
+            wspace=0.26,
+            left=0.04, right=0.985, top=0.915, bottom=0.055,
         )
 
         ax_vel = fig.add_subplot(gs[0, 0])
@@ -738,7 +652,7 @@ class PIVViewer:
             panel_spec=gs[:, 2],
             n_frames=len(finals),
             frame_init=0,
-            scale_init=1.0
+            scale_init=1.0,
         )
 
         mm_per_px = cfg.mm_per_px()
@@ -761,20 +675,19 @@ class PIVViewer:
             bg = r.bg_display
             h_px, w_px = bg.shape
             extent = [0, w_px * mm_per_px, h_px * mm_per_px, 0]
+            bg_lo, bg_hi = _background_limits(bg)
 
             valid = np.isfinite(r.u_mms) & np.isfinite(r.v_mms) & (~r.in_mask)
             uvals = r.u_mms[valid]
             vvals = r.v_mms[valid]
-            
-            # Estadísticas
+
             total_points = valid.size
             valid_count = np.sum(valid)
             max_speed = float(np.nanmax(np.sqrt(r.u_mms[valid]**2 + r.v_mms[valid]**2))) if valid.any() else 0.0
-            
-            # Obtener timestamp correcto desde metadata
+
             timestamp_s = get_timestamp_for_result(r, timestamps)
-            
-            # Actualizar panel temporal
+            t_label = _time_label(timestamp_s, r.dt_ms, idx)
+
             _update_temporal_info(
                 ax_temporal_info,
                 idx=idx,
@@ -784,22 +697,17 @@ class PIVViewer:
                 valid_count=valid_count,
                 total_count=total_points,
                 max_speed=max_speed,
-                timestamp_s=timestamp_s,  # ← NUEVO
+                timestamp_s=timestamp_s,
             )
 
             if uvals.size == 0:
                 for ax in [ax_vel, ax_omega]:
-                    ax.text(
-                        0.5, 0.5, "Sin datos validados",
-                        ha="center", va="center",
-                        transform=ax.transAxes,
-                        fontsize=13,
-                        color=STYLE["invalid"],
-                        fontweight="semibold"
-                    )
-                _style_title(ax_vel, f"Campo de velocidades · t = {r.dt_ms * idx / 1000:.3f}s")
-                _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f}ms")
-                _style_title(ax_omega, f"Campo de vorticidad · t = {r.dt_ms * idx / 1000:.3f}s")
+                    ax.text(0.5, 0.5, "Sin datos validados", ha="center", va="center",
+                            transform=ax.transAxes, fontsize=14,
+                            color=STYLE["text"], fontweight="bold")
+                _style_title(ax_vel, f"Campo de velocidades · {t_label}")
+                _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f} ms")
+                _style_title(ax_omega, f"Campo de vorticidad · {t_label}")
                 _style_title(ax_omega_dist, "Distribución de vorticidad")
                 _force_square_axes(ax_vel, ax_uv, ax_omega)
                 fig.canvas.draw_idle()
@@ -827,7 +735,9 @@ class PIVViewer:
             # ---------------------------------------------------
             # Campo de velocidades + streamlines
             # ---------------------------------------------------
-            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.72)
+            ax_vel.set_facecolor("black")
+            ax_vel.imshow(bg, cmap="gray", origin="upper", extent=extent,
+                          vmin=bg_lo, vmax=bg_hi, alpha=0.78, zorder=0)
 
             try:
                 valid_points = np.column_stack([r.x_mm[valid].ravel(), r.y_mm[valid].ravel()])
@@ -843,18 +753,20 @@ class PIVViewer:
                     v_for_stream = v_interp.reshape(r.y_mm.shape)
                     speed_grid = np.sqrt(u_for_stream**2 + v_for_stream**2)
 
+                    # streamplot no acepta alpha: se aplica sobre las colecciones
                     stream = ax_vel.streamplot(
                         r.x_mm[0, :], r.y_mm[:, 0],
                         u_for_stream, v_for_stream,
                         color=speed_grid,
                         cmap=cmap_vel,
                         norm=norm,
-                        density=1.35,
-                        linewidth=1.4,
-                        arrowsize=1.0,
-                        alpha=0.85,
-                        zorder=2
+                        density=1.3,
+                        linewidth=1.1,
+                        arrowsize=0.9,
+                        zorder=2,
                     )
+                    stream.lines.set_alpha(0.6)
+                    stream.arrows.set_alpha(0.6)
                     artist_mgr.register("stream", stream.lines)
             except Exception as e:
                 print(f"[PIV] Advertencia streamlines: {e}")
@@ -872,52 +784,47 @@ class PIVViewer:
                 angles="xy",
                 scale_units="xy",
                 scale=quiver_scale,
-                width=cfg.quiver_width * 0.95,
-                alpha=0.55,
+                width=cfg.quiver_width * 1.2,
+                headwidth=3.6,
+                headlength=4.2,
+                headaxislength=3.8,
+                alpha=0.9,
                 edgecolors="none",
-                zorder=3
+                zorder=3,
             )
 
             if "vel" not in cbar_refs:
-                cbar_refs["vel"] = fig.colorbar(q, ax=ax_vel, fraction=0.046, pad=0.04)
-                cbar_refs["vel"].set_label("Velocidad [mm/s]")
-                cbar_refs["vel"].ax.tick_params(labelsize=9)
+                cbar_refs["vel"] = fig.colorbar(q, ax=ax_vel, fraction=0.046, pad=0.03)
+                _style_colorbar(cbar_refs["vel"], "Velocidad [mm/s]")
             else:
                 cbar_refs["vel"].update_normal(q)
 
             artist_mgr.register("vel", q)
 
-            _style_title(ax_vel, f"Campo de velocidades · t = {r.dt_ms * idx / 1000:.3f}s")
+            _style_title(ax_vel, f"Campo de velocidades · {t_label}")
             ax_vel.set_xlabel("x [mm]")
             ax_vel.set_ylabel("y [mm]")
 
             # ---------------------------------------------------
             # Espacio u-v
             # ---------------------------------------------------
+            _draw_zero_axes(ax_uv)
             sc = ax_uv.scatter(
                 uvals, vvals,
                 c=speed,
                 cmap=cmap_vel,
                 norm=norm,
-                s=11,
-                alpha=0.60,
-                edgecolors="none"
+                s=12,
+                alpha=0.65,
+                edgecolors="none",
+                zorder=2,
             )
             artist_mgr.register("uv", sc)
 
-            ax_uv.axhline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
-            ax_uv.axvline(0, color=STYLE["zero"], linewidth=1.0, alpha=0.6)
-
-            _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f}ms")
+            _style_title(ax_uv, f"Espacio de velocidades · Δt = {r.dt_ms:.3f} ms")
             ax_uv.set_xlabel("u [mm/s]")
             ax_uv.set_ylabel("v [mm/s]")
-
-            umax = np.percentile(np.abs(uvals), 99)
-            vmax_ax = np.percentile(np.abs(vvals), 99)
-            lim = max(umax, vmax_ax, 1e-6)
-            margin = lim * 0.06
-            ax_uv.set_xlim(-lim - margin, lim + margin)
-            ax_uv.set_ylim(-lim - margin, lim + margin)
+            _set_uv_limits(ax_uv, uvals, vvals)
 
             # ---------------------------------------------------
             # Vorticidad
@@ -926,20 +833,28 @@ class PIVViewer:
                 omega_cache[idx] = _compute_vorticity(r.u_mms, r.v_mms, r.x_mm, r.y_mm, valid)
             omega = omega_cache[idx]
 
-            ax_omega.imshow(bg, cmap="gray", origin="upper", extent=extent, alpha=0.65)
+            ax_omega.set_facecolor("black")
+            ax_omega.imshow(bg, cmap="gray", origin="upper", extent=extent,
+                            vmin=bg_lo, vmax=bg_hi, alpha=0.78, zorder=0)
 
             omega_valid = omega[valid]
-            if omega_valid.size > 0 and np.any(np.isfinite(omega_valid)):
-                max_omega_abs = np.nanmax(np.abs(omega_valid[np.isfinite(omega_valid)]))
-                if max_omega_abs > 1e-6:
-                    omega_norm = omega / max_omega_abs
-                else:
-                    omega_norm = omega
+            omega_finite_all = omega_valid[np.isfinite(omega_valid)]
+            if omega_finite_all.size > 0:
+                # Normaliza por el p98 de |ω| en vez del máximo: un único vector
+                # extremo dejaba casi todo el campo en tonos pálidos.
+                omega_ref = float(np.percentile(np.abs(omega_finite_all), 98))
+                if omega_ref <= 1e-6:
+                    omega_ref = float(np.max(np.abs(omega_finite_all)))
+                omega_norm = omega / omega_ref if omega_ref > 1e-6 else omega
 
                 omega_norm_masked = omega_norm.copy()
                 omega_norm_masked[~valid] = np.nan
 
-                omega_smooth = gaussian_filter(np.nan_to_num(omega_norm_masked, 0), sigma=1.0)
+                # Suavizado normalizado: no arrastra ceros hacia los bordes enmascarados
+                weight = np.isfinite(omega_norm_masked).astype(float)
+                num = gaussian_filter(np.nan_to_num(omega_norm_masked, nan=0.0), sigma=1.0)
+                den = gaussian_filter(weight, sigma=1.0)
+                omega_smooth = np.where(den > 1e-6, num / np.maximum(den, 1e-6), np.nan)
                 omega_smooth[~valid] = np.nan
 
                 levels = np.linspace(-1.0, 1.0, 21)
@@ -947,60 +862,54 @@ class PIVViewer:
                     r.x_mm, r.y_mm, omega_smooth,
                     levels=levels,
                     cmap=STYLE["vorticity_cmap"],
-                    alpha=0.82,
-                    extend="both"
+                    extend="both",
+                    zorder=1,
                 )
+                # Relleno opaco: con transparencia, los bordes entre niveles se
+                # ven como líneas blancas. La estructura del dispositivo se
+                # recupera con una capa tenue del fondo por encima del color.
+                contf.set_edgecolor("face")
+                ax_omega.imshow(bg, cmap="gray", origin="upper", extent=extent,
+                                vmin=bg_lo, vmax=bg_hi, alpha=0.28, zorder=2)
 
                 if "omega" not in cbar_refs:
-                    cbar_refs["omega"] = fig.colorbar(contf, ax=ax_omega, fraction=0.046, pad=0.04)
-                    cbar_refs["omega"].set_label("Vorticidad normalizada")
-                    cbar_refs["omega"].ax.tick_params(labelsize=9)
+                    cbar_refs["omega"] = fig.colorbar(contf, ax=ax_omega, fraction=0.046, pad=0.03)
+                    _style_colorbar(cbar_refs["omega"], "ω / p98(|ω|)")
                 else:
                     cbar_refs["omega"].update_normal(contf)
 
                 artist_mgr.register("omega", contf)
 
-            _style_title(ax_omega, f"Campo de vorticidad · t = {r.dt_ms * idx / 1000:.3f}s")
+            _style_title(ax_omega, f"Campo de vorticidad · {t_label}")
             ax_omega.set_xlabel("x [mm]")
             ax_omega.set_ylabel("y [mm]")
 
             # ---------------------------------------------------
             # Histograma de vorticidad
             # ---------------------------------------------------
-            if omega_valid.size > 0:
-                omega_finite = omega_valid[np.isfinite(omega_valid)]
-                if omega_finite.size > 0:
-                    ax_omega_dist.hist(
-                        omega_finite,
-                        bins=40,
-                        color=STYLE["accent"],
-                        alpha=0.75,
-                        edgecolor="#ffffff",
-                        linewidth=0.6
-                    )
-                    ax_omega_dist.axvline(
-                        0.0,
-                        color=STYLE["zero"],
-                        linestyle="--",
-                        linewidth=1.2,
-                        alpha=0.9,
-                        label="ω = 0"
-                    )
-                    median_val = np.median(omega_finite)
-                    ax_omega_dist.axvline(
-                        median_val,
-                        color=STYLE["invalid"],
-                        linestyle="-",
-                        linewidth=1.4,
-                        alpha=0.85,
-                        label=f"Mediana = {median_val:.2f}"
-                    )
-                    ax_omega_dist.legend(loc="upper right", fontsize=9)
+            if omega_finite_all.size > 0:
+                lim = float(np.percentile(np.abs(omega_finite_all), 99.5))
+                lim = lim if lim > 1e-6 else float(np.max(np.abs(omega_finite_all))) + 1e-6
+                ax_omega_dist.hist(
+                    omega_finite_all,
+                    bins=np.linspace(-lim, lim, 41),
+                    color=STYLE["accent"],
+                    alpha=0.85,
+                    edgecolor="#ffffff",
+                    linewidth=0.5,
+                    zorder=2,
+                )
+                ax_omega_dist.axvline(0.0, color=STYLE["zero"], linestyle="--",
+                                      linewidth=1.0, label="ω = 0", zorder=3)
+                median_val = float(np.median(omega_finite_all))
+                ax_omega_dist.axvline(median_val, color=STYLE["invalid"], linestyle="-",
+                                      linewidth=1.8, label=f"Mediana = {median_val:.2f}", zorder=4)
+                ax_omega_dist.set_xlim(-lim * 1.03, lim * 1.03)
+                ax_omega_dist.legend(loc="upper right")
 
             _style_title(ax_omega_dist, "Distribución de vorticidad")
             ax_omega_dist.set_xlabel("ω [1/s]")
             ax_omega_dist.set_ylabel("Frecuencia")
-            ax_omega_dist.grid(True, axis="y")
 
             _force_square_axes(ax_vel, ax_uv, ax_omega)
             fig.canvas.draw_idle()
@@ -1028,4 +937,3 @@ class PIVViewer:
 
         update()
         #plt.show()
-        plt.close(fig)
