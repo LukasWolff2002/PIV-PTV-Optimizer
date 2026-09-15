@@ -8,6 +8,6 @@ Cam 3 => 1 cm = 78 px
 
 Cam 4 => 1 cm = 107 px
 
-Cam 5 => 1 cm =  px
+Cam 5 => 1 cm = 79 px
 
 Cam 6 => 1 cm = 49 px

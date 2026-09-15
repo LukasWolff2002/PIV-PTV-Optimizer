@@ -14,7 +14,7 @@ import tifffile
 # ============================================================
 # CONFIG USUARIO
 # ============================================================
-IMG_PATH = r"BasePhotos/PIV/cam6.tiff"   # acepta .tif, .tiff o .bmp
+IMG_PATH = r"BasePhotos/PIV/cam5.tiff"   # acepta .tif, .tiff o .bmp
 OUT_DIR  = r"FixMasks"                  # la máscara SIEMPRE se guarda como .tiff
 
 WINDOW_NAME = "Polygon Mask Annotator"
