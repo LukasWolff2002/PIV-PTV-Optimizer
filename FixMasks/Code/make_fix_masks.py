@@ -14,10 +14,16 @@ import tifffile
 # ============================================================
 # CONFIG USUARIO
 # ============================================================
-TIFF_PATH = r"BasePhotos/PIV/cam4.tiff"
-OUT_DIR   = r"FixMasks"
+IMG_PATH = r"BasePhotos/PIV/cam6.tiff"   # acepta .tif, .tiff o .bmp
+OUT_DIR  = r"FixMasks"                  # la máscara SIEMPRE se guarda como .tiff
 
-WINDOW_NAME = "TIFF Polygon Annotator"
+WINDOW_NAME = "Polygon Mask Annotator"
+
+# Extensiones soportadas
+TIFF_EXTS = (".tif", ".tiff")
+BMP_EXTS  = (".bmp",)
+SUPPORTED_EXTS = TIFF_EXTS + BMP_EXTS
+MASK_EXT = ".tiff"
 
 # Polígonos
 CLOSE_RADIUS_PX_ON_SCREEN = 14
@@ -30,6 +36,11 @@ ZOOM_MAX = 30.0
 
 # Panel inferior (UI)
 BOTTOM_PANEL_H = 64
+
+# Vista inicial: la imagen completa debe caber en pantalla
+INIT_WIN_MAX_W = 1600   # tamaño máximo inicial de la ventana (px)
+INIT_WIN_MAX_H = 850
+FIT_MARGIN = 0.98       # <1 deja un pequeño borde alrededor de la imagen
 
 
 @dataclass
@@ -50,20 +61,63 @@ class PolyEditorState:
 # ---------------------------
 # IO / imagen
 # ---------------------------
-def read_tiff_as_float01(path: str) -> tuple[np.ndarray, dict]:
-    arr = tifffile.imread(path)
-    meta = {"shape": tuple(arr.shape), "dtype": str(arr.dtype)}
+def _load_tiff_raw(path: Path) -> np.ndarray:
+    """Lee TIFF y devuelve (H,W) o (H,W,C) en orden RGB."""
+    arr = tifffile.imread(str(path))
 
     if arr.ndim == 2:
-        img = arr
-    elif arr.ndim == 3:
+        return arr
+
+    if arr.ndim == 3:
         # (C,H,W) -> (H,W,C) si parece canal-primero
         if arr.shape[0] in (3, 4) and arr.shape[2] not in (3, 4):
-            img = np.transpose(arr, (1, 2, 0))
-        else:
-            img = arr
+            return np.transpose(arr, (1, 2, 0))
+        # (H,W,C)
+        if arr.shape[2] in (1, 3, 4):
+            return arr[..., 0] if arr.shape[2] == 1 else arr
+        # Multipágina (N,H,W): usar la primera página
+        print(f"[INFO] TIFF multipágina {arr.shape}, se usa la página 0")
+        return arr[0]
+
+    if arr.ndim == 4:
+        # Multipágina a color (N,H,W,C): usar la primera página
+        print(f"[INFO] TIFF multipágina {arr.shape}, se usa la página 0")
+        return arr[0]
+
+    raise ValueError(f"TIFF no soportado: shape={arr.shape}")
+
+
+def _load_bmp_raw(path: Path) -> np.ndarray:
+    """Lee BMP y devuelve (H,W) o (H,W,C) en orden RGB."""
+    # np.fromfile + imdecode funciona también con rutas con tildes/ñ en Windows
+    data = np.fromfile(str(path), dtype=np.uint8)
+    arr = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    if arr is None:
+        raise ValueError(f"No se pudo leer el BMP: {path}")
+
+    if arr.ndim == 2:
+        return arr
+    if arr.shape[2] == 3:
+        return cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
+    if arr.shape[2] == 4:
+        return cv2.cvtColor(arr, cv2.COLOR_BGRA2RGBA)
+    raise ValueError(f"BMP no soportado: shape={arr.shape}")
+
+
+def read_image_as_float01(path: str) -> tuple[np.ndarray, dict]:
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"No existe el archivo: {p}")
+
+    ext = p.suffix.lower()
+    if ext in TIFF_EXTS:
+        img = _load_tiff_raw(p)
+    elif ext in BMP_EXTS:
+        img = _load_bmp_raw(p)
     else:
-        raise ValueError(f"TIFF no soportado: shape={arr.shape}")
+        raise ValueError(f"Extensión no soportada '{ext}'. Usa: {', '.join(SUPPORTED_EXTS)}")
+
+    meta = {"shape": tuple(img.shape), "dtype": str(img.dtype), "format": ext}
 
     img_f = img.astype(np.float32)
 
@@ -86,10 +140,8 @@ def robust_percentile_limits(base01_gray: np.ndarray, clip_percent: float) -> tu
     clip_percent en [0..10] típicamente. 1.0 => p1 y p99.
     """
     cp = float(np.clip(clip_percent, 0.0, 10.0))
-    lo_p = cp
-    hi_p = 100.0 - cp
-    lo = float(np.percentile(base01_gray, lo_p))
-    hi = float(np.percentile(base01_gray, hi_p))
+    lo = float(np.percentile(base01_gray, cp))
+    hi = float(np.percentile(base01_gray, 100.0 - cp))
     if hi <= lo:
         hi = lo + 1e-6
     return lo, hi
@@ -129,10 +181,7 @@ def apply_display(base01: np.ndarray, ev_tenths: int, gamma_x100: int, clip_perc
     if u8.ndim == 2:
         bgr = cv2.cvtColor(u8, cv2.COLOR_GRAY2BGR)
     else:
-        if u8.shape[2] == 3:
-            bgr = cv2.cvtColor(u8, cv2.COLOR_RGB2BGR)
-        else:
-            bgr = cv2.cvtColor(u8[..., :3], cv2.COLOR_RGB2BGR)
+        bgr = cv2.cvtColor(u8[..., :3], cv2.COLOR_RGB2BGR)
 
     return bgr
 
@@ -245,16 +294,22 @@ def draw_overlay(img_bgr_u8: np.ndarray, view: ViewState, st: PolyEditorState,
 
     lines = [
         f"polys_closed={len(st.polys_closed)} | current_pts={len(st.current)} | zoom={view.scale:.2f} | EV={ev:+.1f} | gamma={gamma:.2f} | clip%={clip:.1f} | {coord}",
-        "Mouse: left=add/close | wheel=zoom | right-drag=pan   Keys: S=save  Z=undo  X=del poly  C=clear  R=reset view  +/-=zoom  ESC=exit (auto-save)",
+        "Mouse: left=add/close | wheel=zoom | right-drag=pan   Keys: S=save  Z=undo  X=del poly  C=clear  R=fit view  +/-=zoom  ESC=exit (auto-save)",
     ]
     canvas = draw_ui(canvas, lines)
     return canvas
 
 
 # ---------------------------
-# Guardado máscara TIFF
+# Guardado máscara (siempre TIFF)
 # ---------------------------
-def save_binary_mask_tiff(out_dir: str | Path, st: PolyEditorState, tiff_path: str, img_shape_hw: tuple[int, int]) -> Path:
+def mask_output_path(out_dir: str | Path, img_path: str) -> Path:
+    """cam6.bmp -> FixMasks/cam6.tiff ; cam6.tif -> FixMasks/cam6.tiff"""
+    return Path(out_dir) / (Path(img_path).stem + MASK_EXT)
+
+
+def save_binary_mask_tiff(out_dir: str | Path, st: PolyEditorState, img_path: str,
+                          img_shape_hw: tuple[int, int]) -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -263,16 +318,12 @@ def save_binary_mask_tiff(out_dir: str | Path, st: PolyEditorState, tiff_path: s
 
     for poly in st.polys_closed:
         if len(poly) >= 3:
-            pts = np.array(poly, dtype=np.float32)
-            pts = np.round(pts).astype(np.int32)
+            pts = np.round(np.array(poly, dtype=np.float32)).astype(np.int32)
             pts[:, 0] = np.clip(pts[:, 0], 0, W - 1)
             pts[:, 1] = np.clip(pts[:, 1], 0, H - 1)
-            pts = pts.reshape((-1, 1, 2))
-            cv2.fillPoly(mask, [pts], 0)
+            cv2.fillPoly(mask, [pts.reshape((-1, 1, 2))], 0)
 
-    in_name = Path(tiff_path).name
-    out_path = out_dir / in_name
-
+    out_path = mask_output_path(out_dir, img_path)
     tifffile.imwrite(str(out_path), mask)
     return out_path
 
@@ -281,33 +332,68 @@ def save_binary_mask_tiff(out_dir: str | Path, st: PolyEditorState, tiff_path: s
 # MAIN
 # ============================================================
 def main():
-    base01, meta = read_tiff_as_float01(TIFF_PATH)
+    base01, meta = read_image_as_float01(IMG_PATH)
+    print(f"[INFO] Imagen cargada: {IMG_PATH} | {meta}")
+    print(f"[INFO] La máscara se guardará en: {mask_output_path(OUT_DIR, IMG_PATH)}")
 
     st = PolyEditorState(polys_closed=[], current=[])
     view = ViewState()
     cursor_screen = None
 
+    H_img, W_img = base01.shape[:2]
+
+    # Tamaño inicial de ventana: la imagen reducida (si hace falta) para caber en INIT_WIN_MAX_*
+    init_s = min(1.0, INIT_WIN_MAX_W / W_img, INIT_WIN_MAX_H / H_img)
+    init_w = max(400, int(round(W_img * init_s)))
+    init_h = max(100, int(round(H_img * init_s))) + BOTTOM_PANEL_H
+
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_NAME, init_w, init_h)
 
     # Trackbars
     cv2.createTrackbar("EV x0.1", WINDOW_NAME, 50, 100, lambda v: None)       # 50 => 0.0
     cv2.createTrackbar("Gamma x0.01", WINDOW_NAME, 100, 300, lambda v: None)  # 1.00
     cv2.createTrackbar("Clip % x0.1", WINDOW_NAME, 10, 100, lambda v: None)   # 1.0%
 
-    def reset_view():
-        view.scale = 1.0
+    # Primer frame vacío para que la ventana exista y reporte su tamaño real
+    cv2.imshow(WINDOW_NAME, np.zeros((init_h, init_w, 3), dtype=np.uint8))
+    cv2.waitKey(1)
+
+    def get_window_size() -> tuple[int, int]:
+        """Devuelve (ancho, alto_zona_imagen) de la ventana."""
         try:
-            _, _, win_w, win_h = cv2.getWindowImageRect(WINDOW_NAME)
-            H, W = base01.shape[:2]
-            view.offset_x = (win_w - W) * 0.5
-            view.offset_y = (max(100, win_h - BOTTOM_PANEL_H) - H) * 0.5
+            _, _, ww, wh = cv2.getWindowImageRect(WINDOW_NAME)
+            if ww > 0 and wh > 0:
+                return ww, max(100, wh - BOTTOM_PANEL_H)
         except Exception:
-            view.offset_x = 0.0
-            view.offset_y = 0.0
+            pass
+        return init_w, init_h - BOTTOM_PANEL_H
+
+    # Mientras sea True, la vista se reajusta sola si cambia el tamaño de la ventana.
+    # Se desactiva cuando el usuario hace zoom o pan.
+    auto_fit = True
+    last_fit_size = None
+
+    def fit_view():
+        """Escala y centra la imagen para que se vea completa."""
+        nonlocal last_fit_size
+        win_w, draw_h = get_window_size()
+        s = min(win_w / W_img, draw_h / H_img) * FIT_MARGIN
+        view.scale = float(np.clip(s, ZOOM_MIN, ZOOM_MAX))
+        view.offset_x = (win_w - W_img * view.scale) * 0.5
+        view.offset_y = (draw_h - H_img * view.scale) * 0.5
+        last_fit_size = (win_w, draw_h)
+
+    def reset_view():
+        nonlocal auto_fit
+        auto_fit = True
+        fit_view()
 
     reset_view()
 
     def zoom_at_point(x: int, y: int, factor: float):
+        nonlocal auto_fit
+        auto_fit = False
         old_scale = view.scale
         new_scale = float(np.clip(old_scale * factor, ZOOM_MIN, ZOOM_MAX))
         if abs(new_scale - old_scale) < 1e-12:
@@ -329,11 +415,12 @@ def main():
         return False
 
     def on_mouse(event, x, y, flags, param):
-        nonlocal cursor_screen
+        nonlocal cursor_screen, auto_fit
         cursor_screen = (x, y)
 
         # Pan con botón derecho
         if event == cv2.EVENT_RBUTTONDOWN:
+            auto_fit = False
             view.dragging = True
             view.last_mouse = (x, y)
             return
@@ -352,12 +439,7 @@ def main():
 
         # Click izquierdo: agregar punto / cerrar
         if event == cv2.EVENT_LBUTTONDOWN:
-            try:
-                _, _, win_w, win_h = cv2.getWindowImageRect(WINDOW_NAME)
-                draw_h = max(100, win_h - BOTTOM_PANEL_H)
-            except Exception:
-                draw_h = base01.shape[0]
-
+            _, draw_h = get_window_size()
             if y >= draw_h:
                 return
 
@@ -371,17 +453,15 @@ def main():
             st.current.append((px, py))
             return
 
-        # Zoom con rueda corregido
+        # Zoom con rueda
         if event == cv2.EVENT_MOUSEWHEEL:
             delta = cv2.getMouseWheelDelta(flags)
-
             if delta > 0:
                 factor = ZOOM_STEP
             elif delta < 0:
                 factor = 1.0 / ZOOM_STEP
             else:
                 return
-
             zoom_at_point(x, y, factor)
             return
 
@@ -390,6 +470,10 @@ def main():
     # Cache de percentiles
     last_clip_x10 = None
     cached_limits = None
+
+    def save(tag: str):
+        out_path = save_binary_mask_tiff(OUT_DIR, st, IMG_PATH, (base01.shape[0], base01.shape[1]))
+        print(f"[{tag}] Máscara guardada: {out_path}")
 
     while True:
         if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
@@ -407,14 +491,12 @@ def main():
             cached_limits = robust_percentile_limits(gray, clip_percent_x10 / 10.0)
             last_clip_x10 = clip_percent_x10
 
-        try:
-            _, _, win_w, win_h = cv2.getWindowImageRect(WINDOW_NAME)
-            if win_w <= 0 or win_h <= 0:
-                win_w, win_h = base01.shape[1], base01.shape[0] + BOTTOM_PANEL_H
-        except Exception:
-            win_w, win_h = base01.shape[1], base01.shape[0] + BOTTOM_PANEL_H
+        win_w, draw_h = get_window_size()
 
-        draw_h = max(100, win_h - BOTTOM_PANEL_H)
+        # Si la ventana cambió de tamaño y el usuario no ha tocado la vista, reajustar
+        if auto_fit and last_fit_size != (win_w, draw_h):
+            fit_view()
+
         clamp_view(view, (base01.shape[0], base01.shape[1]), (win_w, draw_h))
 
         img_bgr_u8 = apply_display(
@@ -445,28 +527,15 @@ def main():
             st.polys_closed.clear()
         elif key == ord('r'):  # reset vista
             reset_view()
-        elif key in (ord('+'), ord('=')):  # zoom in por teclado
+        elif key in (ord('+'), ord('=')):
             zoom_at_point(win_w // 2, draw_h // 2, ZOOM_STEP)
-        elif key == ord('-'):  # zoom out por teclado
+        elif key == ord('-'):
             zoom_at_point(win_w // 2, draw_h // 2, 1.0 / ZOOM_STEP)
         elif key == ord('s'):  # guardar manual
-            out_path = save_binary_mask_tiff(
-                OUT_DIR,
-                st,
-                TIFF_PATH,
-                (base01.shape[0], base01.shape[1])
-            )
-            print(f"[OK] Máscara guardada: {out_path}")
+            save("OK")
 
     # Guardado automático al salir
-    out_path = save_binary_mask_tiff(
-        OUT_DIR,
-        st,
-        TIFF_PATH,
-        (base01.shape[0], base01.shape[1])
-    )
-    print(f"[DONE] Máscara final guardada: {out_path}")
-
+    save("DONE")
     cv2.destroyAllWindows()
 
 
