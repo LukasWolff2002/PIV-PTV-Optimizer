@@ -19,7 +19,7 @@ from funciones import (
 # ============================================================================
 
 # Carpeta con las imágenes
-CARPETA_IMAGENES = "FOTOS/"
+CARPETA_IMAGENES = "Filters\PIV\FOTOS"
 
 # Parámetros iniciales por cámara (todos deshabilitados)
 CAMERA_PARAMS = {
@@ -99,6 +99,25 @@ CAMERA_PARAMS = {
         'min_intensity': 0.0000,
         'max_intensity': 0.7237,
     },
+    'cam5': {
+            'roi_enabled': False,
+            'roi_x': 0,
+            'roi_y': 0,
+            'roi_width': 100,
+            'roi_height': 100,
+            'clahe_enabled': True,
+            'clahe_tile_size': 10,
+            'clahe_clip_limit': 0.0100,
+            'intensity_capping': True,
+            'capping_n_std': 5.0000,
+            'highpass_enabled': False,
+            'highpass_size': 15,
+            'wiener_enabled': False,
+            'wiener_size': 3,
+            'gaussian_size': 3,
+            'min_intensity': 0.0000,
+            'max_intensity': 0.7237,
+        },
 }
 
 # ============================================================================
@@ -156,7 +175,7 @@ def main():
     print("="*70 + "\n")
     
     print("CAMERA_PARAMS = {")
-    for cam in ['cam1', 'cam2', 'cam3', 'cam4']:
+    for cam in ['cam1', 'cam2', 'cam3', 'cam4', 'cam5']:
         if cam in results:
             params = results[cam]
         else:

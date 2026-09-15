@@ -74,6 +74,25 @@ CAM_PREPROCESS_PARAMS = {
         'gaussian_size': 3,
         'min_intensity': 0.0000, 'max_intensity': 0.7237,
     },
+    'cam5': {
+                'roi_enabled': False,
+                'roi_x': 0,
+                'roi_y': 0,
+                'roi_width': 100,
+                'roi_height': 100,
+                'clahe_enabled': True,
+                'clahe_tile_size': 10,
+                'clahe_clip_limit': 0.0100,
+                'intensity_capping': True,
+                'capping_n_std': 5.0000,
+                'highpass_enabled': False,
+                'highpass_size': 15,
+                'wiener_enabled': False,
+                'wiener_size': 3,
+                'gaussian_size': 3,
+                'min_intensity': 0.0000,
+                'max_intensity': 0.7237,
+            },
 }
 
 # ---------- REGIONES TEMPORALES ----------
