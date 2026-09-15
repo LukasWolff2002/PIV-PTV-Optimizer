@@ -102,6 +102,11 @@ TEMPORAL_REGIONS_CAR02 = {
         TemporalRegion(name="media_velocidad", start_time=4.5, end_time=8.0,  block_size=22, skip_inter=2, skip_final=18, fps=660.0),
         TemporalRegion(name="baja_velocidad",  start_time=8.0, end_time=20.0, block_size=22, skip_inter=8, skip_final=12, fps=660.0),
     ],
+    5: [
+            TemporalRegion(name="alta_velocidad",  start_time=0.0,  end_time=6.5,  block_size=11, skip_inter=0, skip_final=9,  fps=220.0),
+            TemporalRegion(name="media_velocidad", start_time=6.5,  end_time=10.0, block_size=22, skip_inter=2, skip_final=18, fps=220.0),
+            TemporalRegion(name="baja_velocidad",  start_time=10.0, end_time=20.0, block_size=22, skip_inter=8, skip_final=12, fps=220.0),
+        ],
 }
 
 TEMPORAL_REGIONS_CAR05 = {
@@ -126,6 +131,13 @@ TEMPORAL_REGIONS_CAR05 = {
         TemporalRegion(name="baja_velocidad",     start_time=7.5,  end_time=20.0, block_size=22, skip_inter=4, skip_final=16, fps=660.0),
         TemporalRegion(name="muy_baja_velocidad", start_time=20.0, end_time=40.0, block_size=22, skip_inter=8, skip_final=12, fps=660.0),
     ],
+    5: [
+            TemporalRegion(name="alta_velocidad",         start_time=0.0,  end_time=0.2,  block_size=11,  skip_inter=0, skip_final=9,   fps=220.0),
+            TemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=5.0,  block_size=22,  skip_inter=1, skip_final=19,  fps=220.0),
+            TemporalRegion(name="baja_velocidad",         start_time=5.0,  end_time=8.0,  block_size=22,  skip_inter=2, skip_final=18,  fps=220.0),
+            TemporalRegion(name="muy_baja_velocidad",     start_time=8.0,  end_time=15.0, block_size=22,  skip_inter=4, skip_final=16,  fps=220.0),
+            TemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, block_size=44,  skip_inter=8, skip_final=34,  fps=220.0),
+        ],
 }
 
 
@@ -157,6 +169,7 @@ PIV_PARAMS_CAR02 = {
     2: dict(window_sizes=[128, 64, 32], overlaps=[64, 32, 16], keep_percentile=95.0),
     3: dict(window_sizes=[64,  32, 16], overlaps=[32, 16,  8], keep_percentile=85.0),
     4: dict(window_sizes=[64,  32, 16], overlaps=[32, 16,  8], keep_percentile=90.0),
+    1: dict(window_sizes=[128, 64, 32], overlaps=[64, 32, 16], keep_percentile=95.0),
 }
 
 PIV_PARAMS_CAR05 = {
@@ -164,6 +177,7 @@ PIV_PARAMS_CAR05 = {
     2: dict(window_sizes=[64, 32, 16], overlaps=[32, 16,  8], keep_percentile=92.0),
     3: dict(window_sizes=[64, 32, 16], overlaps=[32, 16,  8], keep_percentile=92.0),
     4: dict(window_sizes=[64, 32, 16], overlaps=[32, 16,  8], keep_percentile=88.0),
+    1: dict(window_sizes=[64, 32, 16], overlaps=[32, 16,  8], keep_percentile=90.0),
 }
 
 # ---------- PARÁMETROS LEGACY ----------
@@ -227,6 +241,12 @@ CAM_PROFILES_PIV = {
     4: dict(
         fps=660, dt_ms=1000*(1/660), px_per_mm=10.7,
         width_px=384, height_px=384,
+        apply_dynamic_mask=True,
+        apply_static_mask=True,
+    ),
+    5: dict(
+        fps=220, dt_ms=1000*(1/220), px_per_mm=7.9,
+        width_px=1024, height_px=1024,
         apply_dynamic_mask=True,
         apply_static_mask=True,
     ),
