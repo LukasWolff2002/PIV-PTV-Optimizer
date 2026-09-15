@@ -32,6 +32,7 @@ def main():
         sig2noise_method=str(c["sig2noise_method"]),
         mask_threshold=float(c["mask_threshold"]),
         apply_dynamic_mask=bool(c.get("apply_dynamic_mask", True)),
+        apply_static_mask=bool(c.get("apply_static_mask", False)),
         default_quiver_scale=8.0,
         quiver_width=0.0025,
         keep_percentile=float(c.get("keep_percentile", 90.0)),

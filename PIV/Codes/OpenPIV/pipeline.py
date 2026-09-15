@@ -118,7 +118,7 @@ class PIVPipeline:
         if cfg.dt_s() <= 0:
             raise RuntimeError(f"DT_MS debe ser > 0. Valor actual: {cfg.dt_ms}")
 
-        use_masks = bool(getattr(cfg, "apply_dynamic_mask", True))
+        use_masks = cfg.use_mask_files()
 
         mask_map: Dict[str, Path] = {}
         if use_masks:
@@ -171,7 +171,7 @@ class PIVPipeline:
         results: List[PIVResult] = []
         names: List[str] = [""] * len(jobs)
 
-        use_masks = bool(getattr(cfg, "apply_dynamic_mask", True))
+        use_masks = cfg.use_mask_files()
 
         futures = []
         with ProcessPoolExecutor(max_workers=max_workers) as ex:

@@ -18,26 +18,25 @@ class PIVRunOptions:
 
 
 def _mask_mode_str(cfg: PIVConfig) -> str:
-    # En este modo, PIV solo usa máscaras por frame desde masks_dir.
     dyn = bool(getattr(cfg, "apply_dynamic_mask", True))
-    return "DINÁMICA (desde masks_dir)" if dyn else "SIN MÁSCARA"
+    sta = bool(getattr(cfg, "apply_static_mask", False))
+    if dyn and sta:
+        return "DINÁMICA + ESTÁTICA (desde masks_dir)"
+    if dyn:
+        return "DINÁMICA (desde masks_dir)"
+    if sta:
+        return "ESTÁTICA (desde masks_dir)"
+    return "SIN MÁSCARA"
 
 
 def _validate_mask_inputs(cfg: PIVConfig) -> None:
-    """
-    Validaciones mínimas:
-    - Si apply_dynamic_mask=True: masks_dir debe existir.
-    - No validamos máscara fija, aunque el cfg la traiga por compatibilidad.
-    """
-    dyn = bool(getattr(cfg, "apply_dynamic_mask", True))
-    if dyn:
+    if cfg.use_mask_files():
         if not getattr(cfg, "masks_dir", None):
-            raise RuntimeError("[PIV] apply_dynamic_mask=True pero cfg.masks_dir es None/vacío.")
+            raise RuntimeError("[PIV] Hay máscara activa pero cfg.masks_dir es None/vacío.")
         if not cfg.masks_dir.exists():
             raise FileNotFoundError(f"[PIV] No existe masks_dir: {cfg.masks_dir}")
         if not cfg.masks_dir.is_dir():
             raise NotADirectoryError(f"[PIV] masks_dir no es carpeta: {cfg.masks_dir}")
-
 
 def run_piv(cfg: PIVConfig, opt: Optional[PIVRunOptions] = None) -> None:
     opt = opt or PIVRunOptions()

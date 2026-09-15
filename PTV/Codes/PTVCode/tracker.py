@@ -249,6 +249,27 @@ class Tracker:
         cy = max(0, min(int(round(det.cy)), mask.shape[0] - 1))
         return bool(mask[cy, cx])
 
+    def filter_masked(
+        self,
+        detections: list[Detection],
+        image_name: str,
+        frame_idx_original: int,
+    ) -> list[Detection]:
+        """Descarta las detecciones cuyo centroide cae en zona enmascarada."""
+        mask = self._get_mask_for_frame(image_name)
+        if mask is None:
+            return list(detections)
+        valid = [d for d in detections if not self._det_in_mask(d, mask)]
+        n_filtered = len(detections) - len(valid)
+        if n_filtered > 0:
+            print(
+                f"[TRACKER] frame {frame_idx_original}: "
+                f"{n_filtered} det(s) en zona enmascarada → descartadas "
+                f"({len(valid)} restantes)",
+                flush=True,
+            )
+        return valid
+
     # ── Feature matrices ──────────────────────────────────────────
 
     def _track_feats(self, tracks: list[Track]) -> np.ndarray:
@@ -424,16 +445,7 @@ class Tracker:
         Convención de máscara: blanco=ignorar, negro=analizar.
         """
         # ── 0) Filtrar detecciones en zona enmascarada ───────────
-        mask = self._get_mask_for_frame(image_name)
-        valid_dets = [d for d in detections if not self._det_in_mask(d, mask)]
-        n_filtered = len(detections) - len(valid_dets)
-        if n_filtered > 0:
-            print(
-                f"[TRACKER] frame {frame_idx_original}: "
-                f"{n_filtered} det(s) en zona enmascarada → descartadas "
-                f"({len(valid_dets)} restantes)",
-                flush=True,
-            )
+        valid_dets = self.filter_masked(detections, image_name, frame_idx_original)
 
         # ── 1) Predicción ABG ────────────────────────────────────
         for tr in self.active_tracks:

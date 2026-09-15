@@ -21,7 +21,7 @@ import variables_ptv as ptv_vars
 # CONFIGURACIÓN PRINCIPAL
 # ============================================================
 
-RUN_MODE = "ptv"  # "piv" | "ptv" | "both"
+RUN_MODE = "piv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
 CONDA_BAT_OPTIONS = [

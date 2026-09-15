@@ -40,6 +40,12 @@ STYLE = {
 
 FONT_SERIF = ["Times New Roman", "DejaVu Serif", "STIXGeneral", "serif"]
 
+def _finite_values(a):
+    """Devuelve un array normal 1D solo con valores válidos (sin máscara, sin NaN/inf)."""
+    if np.ma.isMaskedArray(a):
+        a = a.compressed()          # descarta los valores enmascarados
+    a = np.asarray(a, dtype=float).ravel()
+    return a[np.isfinite(a)]
 
 def _setup_matplotlib_style() -> None:
     plt.rcParams.update({
@@ -619,7 +625,7 @@ class PIVViewer:
         fig.canvas.mpl_connect('key_press_event', on_key)
 
         update()
-        #plt.show()
+        plt.show()
         plt.close(fig)
 
     def show_final(self, finals: List[PIVResultFinal], names: List[str], cfg: PIVConfig) -> None:
@@ -887,11 +893,15 @@ class PIVViewer:
             # ---------------------------------------------------
             # Histograma de vorticidad
             # ---------------------------------------------------
-            if omega_finite_all.size > 0:
-                lim = float(np.percentile(np.abs(omega_finite_all), 99.5))
-                lim = lim if lim > 1e-6 else float(np.max(np.abs(omega_finite_all))) + 1e-6
+            omega_vals = _finite_values(omega_finite_all)   # array normal, sin máscara ni NaN/inf
+
+            if omega_vals.size > 0:
+                abs_vals = np.abs(omega_vals)
+                lim = float(np.percentile(abs_vals, 99.5))
+                if not np.isfinite(lim) or lim <= 1e-6:
+                    lim = float(abs_vals.max()) + 1e-6
                 ax_omega_dist.hist(
-                    omega_finite_all,
+                    omega_vals,
                     bins=np.linspace(-lim, lim, 41),
                     color=STYLE["accent"],
                     alpha=0.85,
@@ -936,4 +946,4 @@ class PIVViewer:
         fig.canvas.mpl_connect('key_press_event', on_key)
 
         update()
-        #plt.show()
+        plt.show()

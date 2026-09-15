@@ -459,6 +459,9 @@ def run_ptv(run_cfg: TrackingConfig, raw_cfg: dict) -> None:
             dptv         = dptv_estimator,
             px_per_mm    = px_per_mm,
         )
+        # Aplicar la máscara aquí para que las detecciones descartadas tampoco
+        # lleguen a detections.csv, a los frames anotados ni a las estadísticas DPTV.
+        detections = tracker.filter_masked(detections, img_path.name, fi_orig)
         all_detections.extend(detections)
 
         # max_dist_px se pasa frame a frame → tracker usa el gate correcto

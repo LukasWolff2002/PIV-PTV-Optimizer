@@ -39,6 +39,7 @@ class PIVConfig:
     # =========================
     mask_threshold: float
     apply_dynamic_mask: bool = True
+    apply_static_mask: bool = False
 
     # =========================
     # Viewer
@@ -80,3 +81,8 @@ class PIVConfig:
 
     def mm_per_px(self) -> float:
         return 1.0 / self.px_per_mm
+
+    def use_mask_files(self) -> bool:
+        # preprocess_run.py guarda la máscara estática dentro de cada *_mask.tiff,
+        # así que los archivos se leen si hay máscara dinámica O estática.
+        return self.apply_dynamic_mask or self.apply_static_mask
