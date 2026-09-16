@@ -11,6 +11,12 @@ en ptv.masks_dir.
 """
 from __future__ import annotations
 
+# En Windows, torch (MKL) + numpy + opencv pueden cargar dos runtimes de OpenMP
+# (libiomp5md.dll) y eso lanza "OMP: Error #15" y aborta. DEBE setearse ANTES
+# de importar numpy/cv2/torch (los imports de PTV.Codes los traen).
+import os
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import json
 import sys
 from pathlib import Path

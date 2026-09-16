@@ -14,6 +14,8 @@ from io import StringIO
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import os
+
 import variables_piv as piv_vars
 import variables_ptv as ptv_vars
 
@@ -21,7 +23,7 @@ import variables_ptv as ptv_vars
 # CONFIGURACIÓN PRINCIPAL
 # ============================================================
 
-RUN_MODE = "piv"  # "piv" | "ptv" | "both"
+RUN_MODE = "ptv"  # "piv" | "ptv" | "both"
 ALLOW_BOTH_WITHOUT_PTV = True
 
 CONDA_BAT_OPTIONS = [
@@ -232,9 +234,21 @@ def cam_profile_for_folder(folder: Path, profiles: dict) -> tuple[int, str, dict
 
 
 def run_env(env: str, script: Path) -> None:
+    # Variables extra para el subproceso:
+    # - KMP_DUPLICATE_LIB_OK: evita "OMP: Error #15" en Windows (torch + numpy/MKL
+    #   cargan dos libiomp5md.dll).
+    # - PYTHONIOENCODING: que los prints con tildes/símbolos no revienten la consola.
+    child_env = {
+        **os.environ,
+        "KMP_DUPLICATE_LIB_OK": "TRUE",
+        "PYTHONIOENCODING": "utf-8",
+    }
     subprocess.run(
-        [CONDA_BAT, "run", "-n", env, "python", str(script), str(CFG_PATH)],
-        check=True, cwd=str(PROJECT_ROOT),
+        [CONDA_BAT, "run", "--no-capture-output", "-n", env,
+         "python", str(script), str(CFG_PATH)],
+        check=True,
+        cwd=str(PROJECT_ROOT),
+        env=child_env,
     )
 
 

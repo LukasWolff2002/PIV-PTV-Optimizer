@@ -587,7 +587,7 @@ def detect_camera(filename):
         'cam1', 'cam2', 'cam3', 'cam4', o None
     """
     filename_lower = filename.lower()
-    for cam in ['cam1', 'cam2', 'cam3', 'cam4']:
+    for cam in ['cam1', 'cam2', 'cam3', 'cam4', 'cam5']:
         if cam in filename_lower:
             return cam
     return None

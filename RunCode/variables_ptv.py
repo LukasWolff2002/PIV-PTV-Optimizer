@@ -77,6 +77,25 @@ CAM_PREPROCESS_PARAMS_PTV = {
         'gaussian_size': 3,
         'min_intensity': 0.1053, 'max_intensity': 0.8289,
     },
+    'cam5': {
+        'roi_enabled': False,
+        'roi_x': 0,
+        'roi_y': 0,
+        'roi_width': 100,
+        'roi_height': 100,
+        'clahe_enabled': True,
+        'clahe_tile_size': 164,
+        'clahe_clip_limit': 0.0770,
+        'intensity_capping': True,
+        'capping_n_std': 3.9302,
+        'highpass_enabled': False,
+        'highpass_size': 15,
+        'wiener_enabled': False,
+        'wiener_size': 3,
+        'gaussian_size': 3,
+        'min_intensity': 1.0000,
+        'max_intensity': 1.0000,
+    },
 }
 
 # ---------- MÁSCARAS DINÁMICAS PTV ----------
@@ -227,6 +246,12 @@ TEMPORAL_REGIONS_PTV_CAR02 = {
         PTVTemporalRegion(name="media_velocidad", start_time=4.5,  end_time=8.0,  skip_frames=2, fps=660.0, max_dist_mm=2.5),
         PTVTemporalRegion(name="baja_velocidad",  start_time=8.0,  end_time=20.0, skip_frames=8, fps=660.0, max_dist_mm=1.5),
     ],
+    5: [
+            PTVTemporalRegion(name="alta_velocidad",     start_time=0.0,  end_time=2.5,  skip_frames=0, fps=220.0, max_dist_mm=3.0),
+            PTVTemporalRegion(name="media_velocidad",    start_time=2.5,  end_time=5.0,  skip_frames=2, fps=220.0, max_dist_mm=2.5),
+            PTVTemporalRegion(name="baja_velocidad",     start_time=5.0,  end_time=8.0,  skip_frames=4, fps=220.0, max_dist_mm=2.0),
+            PTVTemporalRegion(name="muy_baja_velocidad", start_time=8.0,  end_time=20.0, skip_frames=8, fps=220.0, max_dist_mm=2.0),
+        ],
 }
 
 # ---------- REGIONES TEMPORALES CARBOPOL 05 ----------
@@ -255,6 +280,13 @@ TEMPORAL_REGIONS_PTV_CAR05 = {
         PTVTemporalRegion(name="baja_velocidad",     start_time=7.5,  end_time=20.0, skip_frames=4, fps=660.0, max_dist_mm=2.0),
         PTVTemporalRegion(name="muy_baja_velocidad", start_time=20.0, end_time=40.0, skip_frames=8, fps=660.0, max_dist_mm=1.5),
     ],
+    5: [
+            PTVTemporalRegion(name="alta_velocidad",         start_time=0.0,  end_time=0.2,  skip_frames=0,  fps=220.0, max_dist_mm=3.0),
+            PTVTemporalRegion(name="media_velocidad",        start_time=0.2,  end_time=3.0,  skip_frames=2,  fps=220.0, max_dist_mm=2.5),
+            PTVTemporalRegion(name="baja_velocidad",         start_time=3.0,  end_time=8.0,  skip_frames=4,  fps=220.0, max_dist_mm=2.5),
+            PTVTemporalRegion(name="muy_baja_velocidad",     start_time=8.0,  end_time=15.0, skip_frames=8,  fps=220.0, max_dist_mm=2.5),
+            PTVTemporalRegion(name="extrema_baja_velocidad", start_time=15.0, end_time=40.0, skip_frames=16,  fps=220.0, max_dist_mm=2.5),
+        ],
 }
 
 
@@ -436,4 +468,10 @@ CAM_PROFILES_PTV = {
         apply_dynamic_mask=False,
         apply_static_mask=False,
     ),
+    5: dict(
+            fps=220, dt_ms=1000*(1/220), px_per_mm=7.9,
+            width_px=1024, height_px=1024,
+            apply_dynamic_mask=False,
+            apply_static_mask=True,
+        ),
 }
